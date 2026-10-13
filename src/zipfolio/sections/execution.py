@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from ..currency import money
-from ..page import Section
+from ..page import BAD, INFO, MARKS, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table
 
@@ -25,8 +25,7 @@ IMPACT_PARTICIPATION = 0.01
 
 ORDER_TYPE_NAMES = {"market": "Market", "limit": "Limit", "stop": "Stop", "stop_limit": "Stop-limit"}
 
-OK, WARN, BAD, INFO = "ok", "warn", "bad", "info"
-_MARKS = {OK: "&#10003;", WARN: "!", BAD: "&#10007;", INFO: "i"}
+_MARKS = MARKS
 
 
 def fill_quality(transactions: pd.DataFrame, fill_bars: pd.DataFrame | None,
@@ -126,6 +125,12 @@ def build_execution(transactions: pd.DataFrame, orders: pd.DataFrame | None,
                        f"{empty:,} orders asked for no shares -- a rebalance to a weight already held. "
                        "They are left out of every count here."))
     section.side.append("<h3>Realism Checks</h3>" + _checks_html(checks))
+    for status, title, detail, *headline in checks:
+        if status in (BAD, WARN):
+            section.finding(status, headline[0] if headline else title, _first_sentence(detail))
+    if not any(check[0] in (BAD, WARN) for check in checks):
+        section.finding(OK, "Fills pass the realism checks",
+                        "None of the checks below flagged a fill or an order.")
 
     types = book.groupby("type")["state"].value_counts().unstack(fill_value=0)
     for state in ("filled", "partial", "unfilled"):
@@ -228,7 +233,8 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
         if outside:
             detail += ("Typically slippage pushing a buy past a bar that closed at its high: the "
                        "market never traded at that price, so neither could the strategy.")
-        checks.append((OK if not outside else WARN if share < 0.05 else BAD, "Fill prices inside the bar", detail))
+        checks.append((OK if not outside else WARN if share < 0.05 else BAD, "Fill prices inside the bar", detail,
+                       f"{outside:,} fills priced outside their bar's high-low range"))
 
     if "participation" in fills and fills["participation"].notna().any():
         participation = fills["participation"].dropna()
@@ -243,7 +249,9 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
             detail += f"{zero:,} fills happened on bars with no volume at all. "
         detail += ("Above about 1% a real order moves the price; the model charges the same fixed "
                    "basis points whatever the size." if heavy else "Small enough not to move the price.")
-        checks.append((status, "Size against liquidity", detail))
+        checks.append((status, "Size against liquidity", detail,
+                       f"{zero:,} fills on bars with no volume" if zero else
+                       f"{heavy:,} fills took over {IMPACT_PARTICIPATION:.0%} of their bar's volume"))
 
     incomplete = book[book["state"] != "filled"]
     if len(incomplete):
@@ -276,9 +284,14 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
     return checks
 
 
+def _first_sentence(text: str) -> str:
+    head, dot, _ = text.partition(". ")
+    return head + "." if dot else text
+
+
 def _checks_html(checks) -> str:
     rows = []
-    for status, title, detail in checks:
+    for status, title, detail, *_ in checks:
         rows.append(f'<div class="check"><span class="mark {status}">{_MARKS[status]}</span>'
                     f'<div><b>{html.escape(title)}</b><br>{html.escape(detail)}</div></div>')
     return "".join(rows)

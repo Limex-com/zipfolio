@@ -207,8 +207,10 @@ def test_a_traded_backtest_gets_every_section(pyfolio, tmp_path):
     built = build_tearsheet(output, returns, benchmark, records, cash, fills)
 
     assert [name for name in built if name != "Portfolio Risk"] == [
-        "Performance", "Market Regimes", "Positions", "Instruments", "Drawdowns", "Factor Analysis",
-        "Risk Over Time", "Transactions", "Trading Costs", "Round Trips"]
+        "Performance", "Profit Concentration", "Instruments", "Long and Short", "Factor Analysis",
+        "Drawdowns", "Market Regimes", "Risk Over Time",
+        "Positions", "Transactions", "Round Trips",
+        "Trading Costs"], "page order: returns, risk, the book, then whether it can be traded"
     page = output.read_text(encoding="utf-8")
     assert "Key Performance Metrics" in page and "Annual return" in page, (
         "the perf stats table was caught at print_table and rendered in the page's own style")
@@ -227,7 +229,8 @@ def test_a_backtest_that_never_traded_still_gets_its_returns(pyfolio, tmp_path):
         pd.DataFrame(), pd.Series(dtype=float), pd.DataFrame(),
     )
 
-    assert [name for name in built if name != "Portfolio Risk"] == ["Performance", "Factor Analysis"]
+    assert [name for name in built if name != "Portfolio Risk"] == [
+        "Performance", "Profit Concentration", "Factor Analysis"]
     assert "Benchmark: none" in output.read_text(encoding="utf-8"), (
         "the zeros a run without a benchmark is handed are not a benchmark"
     )
@@ -566,7 +569,7 @@ def test_the_instruments_section_breaks_returns_down_by_name(pyfolio, tmp_path):
 
     built = build_tearsheet(output, returns, None, records, cash, fills, orders=orders_for(fills))
 
-    assert built.index("Instruments") == built.index("Positions") + 1
+    assert built.index("Instruments") < built.index("Positions"), "what each name earned comes with the returns"
     page = output.read_text(encoding="utf-8")
     section = page.split("<h2>Instruments</h2>")[1].split("</section>")[0]
     for heading in ("Returns by Instrument", "Contribution to Return by Instrument",
@@ -1004,3 +1007,214 @@ def test_effective_number_of_names():
     assert crowding["effective"].iloc[1] == pytest.approx(1 / (0.9 ** 2 + 0.05 ** 2 * 2))
     assert crowding.iloc[2].isna().all(), "an all-cash day has no concentration to speak of"
 
+
+
+# ----------------------------------------------------------------------------
+# The page's structure: four parts, contents, and a summary of the findings.
+# ----------------------------------------------------------------------------
+
+def test_the_page_is_four_parts_with_contents_and_a_summary(pyfolio, tmp_path):
+    import re
+
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    benchmark = pd.Series(np.random.default_rng(1).normal(0.0003, 0.009, len(closes)), index=closes)
+    output = tmp_path / "zipfolio.html"
+
+    build_tearsheet(output, returns, benchmark, records, cash, fills, orders=orders_for(fills))
+
+    page = output.read_text(encoding="utf-8")
+    parts = re.findall(r'<span class="part-name">([^<]+)</span>', page)
+    assert parts == ["Where the Return Came From", "What It Risked", "How It Holds and Trades",
+                     "Can It Be Traded"]
+    assert page.index('id="summary"') < page.index('id="part-1"'), "the summary comes before the parts"
+    ids = set(re.findall(r'id="([^"]+)"', page))
+    links = set(re.findall(r'href="#([^"]+)"', page))
+    assert links <= ids, f"every link lands somewhere: {links - ids}"
+    summary = page.split('id="summary"')[1].split("</section>")[0]
+    assert summary.count('class="check"') >= 5, "the sections say what they found"
+    assert 'href="#trading-costs"' in summary and 'href="#round-trips"' in summary
+    marks = re.findall(r'class="mark (\w+)"', summary)
+    order = {"bad": 0, "warn": 1, "info": 2, "ok": 3}
+    assert [order[m] for m in marks] == sorted(order[m] for m in marks), "most pressing first"
+
+
+def test_a_failed_section_says_nothing_in_the_summary(pyfolio):
+    from zipfolio.page import BAD, Section, summary_html
+
+    broken = Section("Execution", failed=True)
+    broken.finding(BAD, "should not show")
+    fine = Section("Trading Costs")
+    fine.finding(BAD, "Costs ate it")
+    html = summary_html([broken, fine])
+    assert "Costs ate it" in html and "should not show" not in html
+
+
+# ----------------------------------------------------------------------------
+# Next-bar fills: the same trades, a bar later.
+# ----------------------------------------------------------------------------
+
+def test_a_fill_repriced_at_the_next_open_keeps_its_slippage():
+    from zipfolio.sections.next_bar_fills import repriced_fills
+
+    fills = pd.DataFrame({
+        "id": ["b", "s"], "dt": pd.to_datetime(["2024-03-01 21:00"] * 2, utc=True), "symbol": ["A", "B"],
+        "quantity": [10, -10], "price": [100.1, 49.95],
+    })
+    bars = pd.DataFrame({"close": [100.0, 50.0], "next_open": [102.0, 49.0],
+                         "next_date": pd.to_datetime(["2024-03-04 14:30"] * 2, utc=True)}, index=["b", "s"])
+
+    priced = repriced_fills(fills, bars).set_index("id")
+
+    assert priced.loc["b", "impact"] == pytest.approx(-10 * 100.1 * 0.02), "the buy pays 2% more, slippage included"
+    assert priced.loc["b", "move_bps"] == pytest.approx(200.0)
+    assert priced.loc["s", "impact"] == pytest.approx(-10 * 49.95 * 0.02), "the sell gets 2% less"
+    assert priced.loc["s", "move_bps"] == pytest.approx(200.0), "worse for the side is positive for both"
+
+
+def next_bar_inputs(gap):
+    """A position bought at each close and sold at the next; every next open is ``gap`` above the close."""
+    closes = session_closes("2023-01-03", "2023-03-31")
+    days = pd.DatetimeIndex(closes).tz_localize("UTC")
+    prices = 100.0 * np.cumprod(np.full(len(days), 1.001))
+    fills, bars, records, cash = [], {}, [], []
+    for i, day in enumerate(days[:-1]):
+        fills.append({"id": f"f{i}", "dt": day, "symbol": "A", "quantity": 10, "price": prices[i]})
+        bars[f"f{i}"] = {"close": prices[i], "next_open": prices[i] * (1 + gap), "next_date": days[i + 1]}
+        records.append({"date": day.strftime("%Y-%m-%d"), "symbol": "A", "quantity": 10.0 * (i + 1),
+                        "last_sale_price": prices[i]})
+        cash.append(100_000.0 - 10 * prices[: i + 1].sum())
+    records.append({"date": days[-1].strftime("%Y-%m-%d"), "symbol": "A", "quantity": 10.0 * (len(days) - 1),
+                    "last_sale_price": prices[-1]})
+    cash.append(cash[-1])
+    holdings = positions_in_dollars(pd.DataFrame(records), pd.Series(cash, index=closes),
+                                    daily_returns(pd.Series(0.0, index=closes)).index)
+    returns = holdings.sum(axis="columns").pct_change().fillna(0.0)
+    return returns, holdings, pd.DataFrame(fills), pd.DataFrame(bars).T
+
+
+def test_a_bar_that_wipes_out_the_return_is_flagged(pyfolio):
+    from zipfolio.page import BAD
+    from zipfolio.sections.next_bar_fills import build_next_bar_fills
+
+    returns, holdings, fills, bars = next_bar_inputs(gap=0.05)
+    section = build_next_bar_fills(returns, holdings, fills, bars, {"same_bar_execution": True})
+
+    assert section is not None and section.findings[0].status == BAD
+    assert "wipes out" in section.findings[0].headline
+    assert "The Same Trades, a Bar Later" in "".join(section.side + section.wide)
+
+
+def test_no_next_bar_section_when_orders_already_wait(pyfolio):
+    from zipfolio.sections.next_bar_fills import build_next_bar_fills
+
+    returns, holdings, fills, bars = next_bar_inputs(gap=0.0)
+    assert build_next_bar_fills(returns, holdings, fills, bars, {"same_bar_execution": False}) is None
+    assert build_next_bar_fills(returns, holdings, fills, bars.drop(columns="next_open"), {}) is None
+
+
+def test_the_next_bar_comes_with_the_fill_bar():
+    pl = pytest.importorskip("polars")
+
+    from zipfolio.ziplime import execution_bars
+
+    fills = pd.DataFrame({"id": ["t1", "t2"], "symbol": ["AAPL", "AAPL"],
+                          "dt": [pd.Timestamp("2024-03-04 21:00", tz="UTC"),
+                                 pd.Timestamp("2024-03-05 21:00", tz="UTC")]})
+    bars = pl.DataFrame({
+        "symbol": ["AAPL", "MSFT", "AAPL", "AAPL"],
+        "date": pd.to_datetime(["2024-03-01 05:00", "2024-03-04 05:00", "2024-03-04 05:00", "2024-03-05 05:00"],
+                               utc=True),
+        "open": [99.0, 400.0, 100.0, 103.0], "high": [100.0, 401.0, 102.0, 104.0],
+        "low": [98.0, 399.0, 99.5, 102.0], "close": [99.5, 400.5, 101.5, 103.5], "volume": [1e6] * 4,
+    })
+
+    found = execution_bars(types.SimpleNamespace(data=bars), fills)["fill_bars"]
+
+    assert found.loc["t1", "next_open"] == 103.0, "the same instrument's next bar, not another's"
+    assert found.loc["t1", "next_date"] == pd.Timestamp("2024-03-05 05:00", tz="UTC")
+    assert pd.isna(found.loc["t2", "next_open"]), "the last bar has no next"
+
+
+# ----------------------------------------------------------------------------
+# Profit concentration.
+# ----------------------------------------------------------------------------
+
+def test_the_best_days_are_spent_in_cash():
+    from zipfolio.sections.profit_concentration import without_best_days
+
+    returns = pd.Series([0.01, 0.05, -0.02, 0.03, 0.0])
+    assert without_best_days(returns, 2).tolist() == [0.01, 0.0, -0.02, 0.0, 0.0]
+
+
+def test_the_bootstrap_is_repeatable_and_centred_on_the_total():
+    from zipfolio.sections.profit_concentration import bootstrap_totals
+
+    pnl = np.array([100.0, -40.0, 25.0, -10.0, 60.0])
+    first, second = bootstrap_totals(pnl, samples=4_000), bootstrap_totals(pnl, samples=4_000)
+    assert np.array_equal(first, second), "the same backtest gets the same page"
+    assert first.mean() == pytest.approx(pnl.sum(), rel=0.05)
+    assert len(bootstrap_totals(pnl, samples=7)) == 7
+
+
+def test_a_return_made_in_five_days_is_flagged(pyfolio):
+    from zipfolio.page import BAD
+    from zipfolio.sections.profit_concentration import build_profit_concentration
+
+    closes = session_closes()
+    returns = pd.Series(-0.0005, index=daily_returns(pd.Series(0.0, index=closes)).index)
+    returns.iloc[[20, 60, 100, 140, 180]] = 0.05
+    section = build_profit_concentration(returns, None, None)
+
+    assert section.findings[0].status == BAD and section.findings[0].headline == "5 sessions made all of the return"
+
+
+# ----------------------------------------------------------------------------
+# Long and short.
+# ----------------------------------------------------------------------------
+
+def test_long_and_short_legs_add_up_to_the_book(pyfolio):
+    from zipfolio.sections.instruments import instrument_pnl
+    from zipfolio.sections.long_short import build_long_short
+
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    dates = daily_returns(returns).index
+    holdings = positions_in_dollars(records, cash, dates)
+    txns = transactions_frame(fills)
+
+    section = build_long_short(daily_returns(returns), holdings, txns)
+
+    assert section is not None, "the book shorts MSFT and AAPL at times"
+    table = section.side[0] + "".join(section.wide)
+    assert "Each Side of the Book" in table
+    assert section.findings and section.findings[0].section == "Long and Short"
+    total = instrument_pnl(holdings, txns).to_numpy().sum()
+    from zipfolio.sections.long_short import side_of_day
+
+    pnl = instrument_pnl(holdings, txns)
+    side = side_of_day(holdings, txns, pnl.columns)
+    assert pnl.where(side > 0, 0).to_numpy().sum() + pnl.where(side < 0, 0).to_numpy().sum() \
+        + pnl.where(side == 0, 0).to_numpy().sum() == pytest.approx(total)
+
+
+def test_a_day_belongs_to_the_side_held_at_the_previous_close():
+    from zipfolio.sections.long_short import side_of_day
+
+    days = pd.date_range("2024-03-01", periods=4, tz="UTC")
+    holdings = pd.DataFrame({"A": [100.0, -50.0, 0.0, 0.0], "cash": 1000.0}, index=days)
+    txns = pd.DataFrame({"amount": [1, -3, 1, 2, -2], "price": 50.0, "symbol": "A"},
+                        index=pd.DatetimeIndex([days[0], days[1], days[2], days[3], days[3]]))
+
+    side = side_of_day(holdings, txns, ["A"])["A"].tolist()
+    assert side == [1, 1, -1, 1], "opened long; flipped short on a long day; closed a short; in and out long"
+
+
+def test_a_long_only_book_has_no_long_short_section(pyfolio):
+    from zipfolio.sections.long_short import build_long_short
+
+    days = pd.date_range("2024-03-01", periods=5, tz="UTC")
+    holdings = pd.DataFrame({"A": [100.0, 110.0, 120.0, 0.0, 0.0], "cash": 1000.0}, index=days)
+    txns = pd.DataFrame({"amount": [1, -1], "price": 100.0, "symbol": "A"},
+                        index=pd.DatetimeIndex([days[0], days[3]]))
+    assert build_long_short(pd.Series(0.0, index=days), holdings, txns) is None

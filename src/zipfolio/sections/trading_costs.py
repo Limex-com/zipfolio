@@ -7,7 +7,7 @@ import pandas as pd
 
 from ..currency import money, money_formatter, unit
 from ..inputs import utc_dates
-from ..page import Section
+from ..page import BAD, INFO, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart, color_mix
 from ..tables import Table
 
@@ -89,6 +89,17 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
         at_minimum = int(np.isclose(charged["commission"], minimum).sum())
         summary["Orders paying the minimum"] = f"{at_minimum:,} ({at_minimum / len(charged):.0%})"
     section.table(Table(pd.Series(summary).to_frame("Value"), None), title="Cost Summary", first_header="Metric")
+    detail = (f"{(gross_annual - net_annual) * 100:.2f} pp a year: {gross_annual:.1%} before costs, "
+              f"{net_annual:.1%} after.")
+    if gross_profit > 0:
+        share = total_costs / gross_profit
+        if net_profit < 0:
+            section.finding(BAD, "Trading costs turned a gross profit into a loss", detail)
+        else:
+            section.finding(WARN if share >= 0.3 else OK if share < 0.1 else INFO,
+                            f"Trading costs took {share:.0%} of the gross profit", detail)
+    elif total_costs > 0:
+        section.finding(INFO, f"Trading costs of {money(total_costs, 0)} on top of a gross loss", detail)
 
     by_symbol = pd.DataFrame({"Commission": commission_by_symbol, "Slippage": slippage_by_symbol}).fillna(0.0)
     by_symbol["Total"] = by_symbol.sum(axis="columns")

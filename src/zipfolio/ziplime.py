@@ -8,8 +8,9 @@ report needs while the run is still in memory, as plain frames:
 
 * :func:`daily_bars` -- price and volume per instrument per session, for the
   capacity analysis;
-* :func:`execution_bars` -- the OHLCV bar each fill happened on, and the close
-  of the bar each order was placed on, for the execution analysis;
+* :func:`execution_bars` -- the OHLCV bar each fill happened on and the open of
+  the bar after it, and the close of the bar each order was placed on, for the
+  execution analysis and the next-bar repricing;
 * :func:`order_type` -- ``market``, ``limit``, ``stop`` or ``stop_limit``, from
   an order's ziplime execution style.
 
@@ -76,7 +77,10 @@ def execution_bars(bundle, fills: pd.DataFrame, orders: pd.DataFrame | None = No
     ``symbol`` and ``created``. Both are joined as of the simulation time --
     the latest bar at or before the fill, or the order's creation -- so a
     daily and an intraday bundle answer the same way. Returns
-    ``{"fill_bars": OHLCV by fill id, "decision_prices": decision_price by order id}``.
+    ``{"fill_bars": OHLCV by fill id, "decision_prices": decision_price by order id}``;
+    ``fill_bars`` also carries ``next_open`` and ``next_date``, the open and the
+    time of the instrument's following bar -- where the fill would have landed
+    had the order waited a bar. Both are empty on the last bar of the data.
 
     A fill priced outside its own bar's high-low range, or for more of the
     bar's volume than traded, is a fill the market would not have given; that
@@ -95,7 +99,9 @@ def execution_bars(bundle, fills: pd.DataFrame, orders: pd.DataFrame | None = No
         bars = (data.select(sorted(required))
                 .filter(pl.col("symbol").is_in(symbols))
                 .with_columns(pl.col("date").dt.convert_time_zone("UTC").dt.cast_time_unit("us"))
-                .sort("date"))
+                .sort("date")
+                .with_columns(pl.col("open").shift(-1).over("symbol").alias("next_open"),
+                              pl.col("date").shift(-1).over("symbol").alias("next_date")))
 
         def as_of(frame: pd.DataFrame, when: str) -> pd.DataFrame:
             keys = pl.from_pandas(pd.DataFrame({
@@ -106,7 +112,7 @@ def execution_bars(bundle, fills: pd.DataFrame, orders: pd.DataFrame | None = No
             joined = keys.join_asof(bars, left_on="at", right_on="date", by="symbol", strategy="backward")
             return joined.to_pandas().set_index("key")
 
-        fill_bars = as_of(fills, "dt")[list(BAR_COLUMNS)]
+        fill_bars = as_of(fills, "dt")[[*BAR_COLUMNS, "next_open", "next_date"]]
         decision = pd.DataFrame()
         if orders is not None and not orders.empty and "created" in orders.columns:
             first = orders.drop_duplicates("id", keep="first")

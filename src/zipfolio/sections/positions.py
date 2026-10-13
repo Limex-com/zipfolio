@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from ..page import Section
+from ..page import INFO, WARN, Section
 from ..style import anchor_zero, chart, held_only, mark_isolated
 from ..tables import captured_tables
+
+#: Gross leverage above this is worth a line in the summary; above the second, a warning.
+LEVERAGE_NOTE, LEVERAGE_WARN = 1.05, 1.5
 
 
 def build_positions(returns, positions) -> Section:
@@ -32,4 +35,16 @@ def build_positions(returns, positions) -> Section:
     section.chart(chart("Long and Short Holdings", lambda ax: plotting.plot_long_short_holdings(
         returns, allocation, ax=ax)))
     section.chart(chart("Gross Leverage", lambda ax: plotting.plot_gross_leverage(returns, positions, ax=ax)))
+
+    largest = allocation.drop(columns="cash", errors="ignore").abs().max(axis="columns")
+    held = largest[largest > 0]
+    if len(held):
+        section.finding(INFO, f"The largest position is {held.median():.0%} of the portfolio on a typical day",
+                        f"{held.max():.0%} at its largest.")
+    leverage = positions.drop(columns="cash", errors="ignore").abs().sum(axis="columns") / positions.sum(axis="columns")
+    if leverage.max() > LEVERAGE_NOTE:
+        section.finding(WARN if leverage.max() > LEVERAGE_WARN else INFO,
+                        f"Gross leverage reached {leverage.max():.2f}x",
+                        f"{leverage.median():.2f}x on a typical day. Borrowing and shorting costs are not "
+                        "modeled.")
     return section

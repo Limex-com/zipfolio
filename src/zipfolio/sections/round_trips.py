@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..currency import money, unit
-from ..page import Section
+from ..page import INFO, WARN, Section
 from ..style import LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table, captured_tables, present
 
@@ -55,6 +55,14 @@ def build_round_trips(returns, positions, transactions) -> Section | None:
     section.chart(chart("Holding Time", histogram([x.days for x in trades["duration"]], "Days")))
     section.chart(chart("PnL per Round Trip", histogram(trades["pnl"], f"PnL, {unit()}")))
     section.chart(chart("Round Trip Returns", histogram(trades["returns"].dropna() * 100, "Return, %")))
+
+    pnl = trades["pnl"].astype(float)
+    wins, losses = pnl[pnl > 0].sum(), -pnl[pnl < 0].sum()
+    factor = wins / losses if losses else float("inf")
+    shown = f"{factor:.2f}" if losses else "no losing trades"
+    section.finding(WARN if factor < 1 else INFO,
+                    f"{len(pnl):,} round trips, {(pnl > 0).mean():.0%} profitable, profit factor {shown}",
+                    f"Median holding time {trades['duration'].median().days} days.")
     return section
 
 

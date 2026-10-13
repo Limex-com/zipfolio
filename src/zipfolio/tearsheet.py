@@ -17,16 +17,19 @@ from .inputs import (
     transactions_frame,
     usable_benchmark,
 )
-from .page import DEFAULT_TITLE, Section, page_html
+from .page import DEFAULT_TITLE, Section, ordered, page_html
 from .sections.capacity import build_capacity
 from .sections.drawdowns import build_drawdowns
 from .sections.execution import build_execution
 from .sections.factor_analysis import build_factor_analysis, build_market_model_analysis
 from .sections.instruments import build_instruments
+from .sections.long_short import build_long_short
 from .sections.market_regimes import build_market_regimes
+from .sections.next_bar_fills import build_next_bar_fills
 from .sections.performance import build_performance
 from .sections.portfolio_risk import build_portfolio_risk
 from .sections.positions import build_positions
+from .sections.profit_concentration import build_profit_concentration
 from .sections.risk_over_time import build_risk_over_time
 from .sections.round_trips import build_round_trips
 from .sections.sector_analysis import build_sector_analysis
@@ -58,22 +61,21 @@ def build_tearsheet(
 ) -> list[str]:
     """Write the Zipfolio tearsheet for one backtest to ``output``.
 
-    The sections, each charts on the left and tables on the right:
+    The page opens with contents and a summary of what the sections found
+    (``Section.finding``), most pressing first, then the sections in four parts
+    (``page.GROUPS``), each charts on the left and tables on the right:
+
+    **Where the return came from**
 
     * **Performance** -- key metrics, cumulative returns, the top drawdowns and
       the underwater curve, always. Deliberately short: the QuantStats tearsheet
       beside this one covers returns in depth;
-    * **Market Regimes** -- when there is a benchmark: up and down capture,
-      beta on up and down days, the average month in rising, falling, calm
-      and volatile markets;
-    * **Positions**, **Transactions**, **Round Trips** -- when the strategy traded;
-    * **Drawdowns** -- when the strategy traded: each of the worst drawdowns
-      split, exactly, across the names (and sectors) that made it;
-    * **Risk Over Time** -- when the strategy traded: predicted against
-      realized volatility, each name's share of risk, concentration;
+    * **Profit Concentration** -- the return without its best days; with round
+      trips, their share of the net PnL in the best few, and a bootstrap;
     * **Instruments** -- when the strategy traded: each name's PnL and
       contribution, read mark-to-market from the book and the fills, and the
       spread of its daily and round-trip returns;
+    * **Long and Short** -- when the book went short: what each side earned;
     * **Sector Analysis** -- when ``sector_mappings`` classifies a held name;
     * **Factor Analysis** -- when ``factor_model`` names one: ``"ff5_mom"`` (the
       default), ``"ff5"``, ``"ff3"`` or ``"ff3_mom"`` for Fama-French, which
@@ -82,13 +84,32 @@ def build_tearsheet(
       series of a rate in percent a year), which is what a Moscow book gets;
       ``None`` for none. Exposures, alpha, attribution, rolling betas.
       ``factor_data`` replaces the Fama-French download;
+
+    **What it risked**
+
+    * **Drawdowns** -- when the strategy traded: each of the worst drawdowns
+      split, exactly, across the names (and sectors) that made it;
+    * **Market Regimes** -- when there is a benchmark: up and down capture,
+      beta on up and down days, the average month in rising, falling, calm
+      and volatile markets;
+    * **Portfolio Risk** -- skfolio's risk measures, always; risk contribution
+      and alternative allocations when the strategy traded and ``market_data``
+      covers it;
+    * **Risk Over Time** -- when the strategy traded: predicted against
+      realized volatility, each name's share of risk, concentration;
+
+    **How it holds and trades** -- **Positions**, **Transactions**, **Round
+    Trips**, when the strategy traded;
+
+    **Can it be traded**
+
+    * **Next-Bar Fills** -- when orders fill on the bar that produced them and
+      ``fill_bars`` carry ``next_open``: every fill priced again at the open of
+      the instrument's next bar, and what is left of the return;
     * **Execution** -- when the strategy traded and ``orders`` are given: how
       the backtest fills orders, realism checks of every fill against its bar
       (``fill_bars``) and of every order against the price it was decided at
       (``decision_prices``), order types, waits, participation, shortfall;
-    * **Portfolio Risk** -- skfolio's risk measures, always; risk contribution
-      and alternative allocations when the strategy traded and ``market_data``
-      covers it;
     * **Trading Costs** -- when the strategy traded: the cost model from
       ``cost_settings`` (the run's commission and slippage settings) in
       words, commissions from ``orders`` (ziplime charges them to the order,
@@ -105,7 +126,7 @@ def build_tearsheet(
     ``currency`` (``"USD"``, ``"RUB"``, ``"EUR"``) is how every amount is
     written, and sets the capital base of the capacity analysis.
 
-    Returns the titles of the sections that made it into the page.
+    Returns the titles of the sections that made it into the page, in page order.
     """
     import matplotlib.pyplot as plt
     import pyfolio as pf
@@ -134,8 +155,11 @@ def build_tearsheet(
     if positions is not None:
         bars = market_data_frame(market_data, transactions["symbol"].unique(), returns.index)
 
+    # Built in this order -- Portfolio Risk last of all, after pyfolio's styles
+    # are no longer needed -- and laid out on the page by group (page.GROUPS).
     builders: list[tuple[str, Callable[[], Section | None]]] = [
         ("Performance", lambda: build_performance(returns, benchmark, positions, transactions)),
+        ("Profit Concentration", lambda: build_profit_concentration(returns, positions, transactions)),
         ("Market Regimes", lambda: build_market_regimes(returns, benchmark)),
     ]
     sectors = sectors_of(positions, sector_mappings) if positions is not None else {}
@@ -143,6 +167,7 @@ def build_tearsheet(
         builders += [
             ("Positions", lambda: build_positions(returns, positions)),
             ("Instruments", lambda: build_instruments(returns, holdings, positions, transactions, orders)),
+            ("Long and Short", lambda: build_long_short(returns, holdings, transactions, orders)),
             ("Drawdowns", lambda: build_drawdowns(returns, holdings, transactions, orders, sectors or None)),
         ]
         if sectors:
@@ -157,6 +182,7 @@ def build_tearsheet(
         builders += [
             ("Risk Over Time", lambda: build_risk_over_time(returns, holdings, bars)),
             ("Transactions", lambda: build_transactions(returns, positions, transactions, market_timezone)),
+            ("Next-Bar Fills", lambda: build_next_bar_fills(returns, holdings, raw_fills, fill_bars, cost_settings)),
             ("Execution", lambda: build_execution(raw_fills, orders, fill_bars, decision_prices, cost_settings)),
             ("Trading Costs", lambda: build_trading_costs(returns, positions, transactions, orders, cost_settings)),
             ("Round Trips", lambda: build_round_trips(returns, positions, transactions)),
@@ -198,4 +224,5 @@ def build_tearsheet(
         page_html(title, returns, benchmark, versions, sections),
         encoding="utf-8",
     )
-    return built
+    # In page order, which is the order a reader meets them in.
+    return [section.title for _, members in ordered(sections) for section in members if section.title in built]

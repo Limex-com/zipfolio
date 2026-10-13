@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..page import Section
+from ..page import OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table
 
@@ -77,6 +77,11 @@ def build_market_regimes(returns: pd.Series, benchmark: pd.Series | None) -> Sec
         f"Months {name} rose": f"{int((monthly['benchmark'] > 0).sum()):,} of {len(monthly):,}",
     })
     section.table(Table(facts.to_frame("Value"), None), title=f"Against {name}", first_header="Measure")
+    if np.isfinite(up) and np.isfinite(down):
+        better = down <= 0 or up / down >= 1
+        section.finding(OK if better else WARN, f"Up capture {up:.0%}, down capture {down:.0%} against {name}",
+                        "It takes more of the market's rises than of its falls." if better else
+                        "It takes more of the market's falls than of its rises.")
     section.side.append(
         f'<p class="explain"><b>Up capture</b> is how much of {name}\'s rise the strategy took in '
         f'the months {name} rose -- 120% is a fifth more than the market, 60% a bit over half -- and '

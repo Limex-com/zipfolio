@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..page import Section
+from ..page import INFO, Section
 from ..style import BENCHMARK_COLOR, PALETTE, chart
 from ..tables import Table
 from .instruments import commission_by_day, instrument_pnl
@@ -86,6 +86,11 @@ def build_drawdowns(returns, holdings, transactions, orders=None, sectors=None) 
         'dividends paid into cash, is shown on its own.</p>')
     worst = shares.iloc[0].drop(RESIDUAL)
     worst = worst[worst.abs() > 1e-9].sort_values()  # names not held then contributed nothing
+    first = drawdowns.iloc[0]
+    if len(worst) and worst.iloc[0] < 0:
+        section.finding(INFO, f"Worst drawdown {-abs(first['Depth']):.1%}, {first['Peak']:%b %Y} to "
+                              f"{first['Valley']:%b %Y}",
+                        f"{worst.index[0]} cost {abs(worst.iloc[0]) * 100:.1f} points of it.")
     section.table(Table(worst.head(10).to_frame("Points of the Drawdown"), None, "{:.2%}".format),
                   title=f"Drawdown #1, by Name ({drawdowns.iloc[0]['Depth']:.1%})", first_header="Symbol")
 

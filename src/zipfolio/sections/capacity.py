@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..currency import currency, millions
-from ..page import Section
+from ..page import OK, WARN, Section
 from ..style import chart
 from ..tables import Table
 
@@ -28,6 +28,7 @@ def build_capacity(returns, positions, transactions, market_data) -> Section:
     base = currency().capacity_base
     original = capacity.daily_txns_with_bar_data
     capacity.daily_txns_with_bar_data = _daily_txns_with_bar_data
+    slow, heavy = 0, 0
     try:
         last_n_days = 126
         section.side.append(
@@ -37,6 +38,8 @@ def build_capacity(returns, positions, transactions, market_data) -> Section:
             days = capacity.get_max_days_to_liquidate_by_ticker(
                 positions, market_data, max_bar_consumption=0.2, capital_base=base,
                 mean_volume_window=5, last_n_days=window)
+            if window is None:
+                slow = int((days["days_to_liquidate"] > 1).sum())
             section.table(
                 Table(days[days["days_to_liquidate"] > 1], None, None,
                       {"days_to_liquidate": "{:.1f}".format, "pos_alloc_pct": "{:.2f}%".format}),
@@ -44,6 +47,8 @@ def build_capacity(returns, positions, transactions, market_data) -> Section:
                 rename={"date": "Date", "days_to_liquidate": "Days", "pos_alloc_pct": "Allocation"})
         for label, window in (("Whole Backtest", None), (f"Last {last_n_days} Sessions", last_n_days)):
             fills = capacity.get_low_liquidity_transactions(transactions, market_data, last_n_days=window)
+            if window is None:
+                heavy = int((fills["max_pct_bar_consumed"] > 5).sum())
             section.table(
                 Table(fills[fills["max_pct_bar_consumed"] > 5], None, None,
                       {"max_pct_bar_consumed": "{:.2f}%".format}),
@@ -61,6 +66,13 @@ def build_capacity(returns, positions, transactions, market_data) -> Section:
         section.chart(chart("Capital Base Performance Sweep", sweep, height=3.5))
     finally:
         capacity.daily_txns_with_bar_data = original
+    if slow or heavy:
+        section.finding(WARN, f"At {millions(base)}, {slow:,} names would take over a day to sell",
+                        f"{heavy:,} names had a day's fills over 5% of that day's volume." if heavy else
+                        "No day's fills took over 5% of its volume.")
+    else:
+        section.finding(OK, f"At {millions(base)}, every position could be sold within a day",
+                        "Taking at most 20% of a day's volume.")
     return section
 
 

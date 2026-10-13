@@ -7,9 +7,9 @@ import traceback
 import numpy as np
 import pandas as pd
 
-from ..currency import money_formatter, unit
+from ..currency import money, money_formatter, unit
 from ..inputs import utc_dates
-from ..page import Section
+from ..page import INFO, WARN, Section
 from ..style import LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
 from ..tables import Table
 from .round_trips import extract_round_trips
@@ -49,6 +49,23 @@ def commission_by_day(orders: pd.DataFrame | None, index: pd.DatetimeIndex, colu
     amounts = pd.to_numeric(charged["commission"], errors="coerce").fillna(0.0)
     by_day = amounts.groupby([utc_dates(charged["dt"]), charged["symbol"].astype(str)]).sum().unstack(fill_value=0.0)
     return by_day.reindex(index=index, columns=columns, fill_value=0.0).fillna(0.0)
+
+
+def _concentration_finding(section: Section, summary: pd.DataFrame) -> None:
+    traded = summary[summary["Days Held"] > 0]
+    if len(traded) < 3:
+        return
+    total = float(traded["Net PnL"].sum())
+    if total > 0:
+        top = traded["Net PnL"].nlargest(2)
+        share = float(top.sum()) / total
+        section.finding(WARN if share >= 0.75 else INFO,
+                        f"{top.index[0]} and {top.index[1]} made {share:.0%} of the net PnL",
+                        f"{len(traded):,} instruments held in all.")
+    else:
+        worst = traded["Net PnL"].nsmallest(2)
+        section.finding(INFO, f"A net loss of {money(-total, 0)}; {worst.index[0]} and {worst.index[1]} lost the most",
+                        f"{len(traded):,} instruments held in all.")
 
 
 def build_instruments(returns, holdings, positions, transactions, orders=None) -> Section:
@@ -94,6 +111,7 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
         summary["Best Trade"] = by_symbol.max()
         summary["Worst Trade"] = by_symbol.min()
     summary = summary.sort_values("Net PnL", ascending=False)
+    _concentration_finding(section, summary)
 
     money = money_formatter()
     percent = "{:.2%}".format

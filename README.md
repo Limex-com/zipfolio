@@ -71,21 +71,46 @@ name the Zipfolio version that built the page and link back to this repository.
 The default title is "Zipfolio Tearsheet: Portfolio, Execution & Cost Analysis"
 (`title=` changes it).
 
+The page opens with contents and a **summary**: each section states what it
+found in a sentence -- marked as needing a look, worth knowing, or holding up --
+and the summary lists them, most pressing first, each linked to the numbers.
+The sections follow in four parts, each the question a reader brings:
+
+**I. Where the return came from**
+
 | Section | Shown when | Contents |
 | --- | --- | --- |
 | **Performance** | always | key metrics, cumulative returns, underwater curve -- deliberately short; returns are QuantStats' job |
-| **Market Regimes** | a benchmark is given | up and down capture, beta on up and down days, the average month in rising/falling x calm/volatile markets, monthly returns against the benchmark |
-| **Positions** | the strategy traded | exposure, top positions, long/short concentration, holdings, gross leverage |
+| **Profit Concentration** | 50+ sessions | the return without the best 5, 10 and 20 days; the share of net PnL in the best round trips; a bootstrap of the round trips and its chance of a net loss |
 | **Instruments** | traded | each name's PnL, contribution, weight, days held, trade stats; contribution by year; daily and round-trip return distributions per name; cumulative PnL by name |
-| **Drawdowns** | traded | each of the five worst drawdowns split, exactly, across the names and sectors that made it |
+| **Long and Short** | the book went short | PnL, contribution, exposure, winning days and return on exposure of each side; cumulative and yearly PnL by side |
 | **Sector Analysis** | a held name has a sector | allocation over time, average and peak, profit attribution by GICS sector |
 | **Factor Analysis** | a factor model is set | Fama-French 5 + momentum (US) or a market model against the benchmark over RUONIA (Moscow): betas with Newey-West t-stats, alpha, fit, attribution (overall and by year), rolling betas, return decomposition |
+
+**II. What it risked**
+
+| Section | Shown when | Contents |
+| --- | --- | --- |
+| **Drawdowns** | traded | each of the five worst drawdowns split, exactly, across the names and sectors that made it |
+| **Market Regimes** | a benchmark is given | up and down capture, beta on up and down days, the average month in rising/falling x calm/volatile markets, monthly returns against the benchmark |
 | **Portfolio Risk** | always (more when traded) | VaR/CVaR/EVaR, drawdown-at-risk/CDaR/EDaR, Ulcer index, Gini mean difference; rolling tail risk; risk contribution per holding; clustered correlations; the same names under four allocation rules, walk-forward |
 | **Risk Over Time** | traded | predicted volatility (each day's weights x trailing covariance) against what the next month delivered, each name's share of risk by month, effective number of names, top-3 and largest weight |
+
+**III. How it holds and trades**
+
+| Section | Shown when | Contents |
+| --- | --- | --- |
+| **Positions** | traded | exposure, top positions, long/short concentration, holdings, gross leverage |
 | **Transactions** | traded | trading frequency, fill sizes, buys and sells, turnover, volume, fill times on the market's own clock |
+| **Round Trips** | 5+ round trips | summary, PnL, duration and return statistics, per symbol, lifetimes, distributions |
+
+**IV. Can it be traded**
+
+| Section | Shown when | Contents |
+| --- | --- | --- |
+| **Next-Bar Fills** | orders fill on their signal bar and `fill_bars` carry the next open | every fill priced again at the open of the instrument's next bar, same shares and slippage: returns, Sharpe and drawdown both ways, the move per fill, what the wait cost over time |
 | **Execution** | orders are given | how the backtest fills orders, realism checks, orders by type, fill statistics, fill price within the bar and against its typical price, share of bar volume, implementation shortfall, waits |
 | **Trading Costs** | traded | the cost model in plain words, cost summary and per symbol, costs over time, returns before and after costs, sensitivity to extra slippage |
-| **Round Trips** | 5+ round trips | summary, PnL, duration and return statistics, per symbol, lifetimes, distributions |
 | **Capacity** | daily bars are given | days to liquidate, fills over 5% of daily volume, Sharpe across capital bases |
 
 A section that cannot be computed becomes a short note, a chart that fails is
@@ -189,7 +214,8 @@ What it relies on from ziplime:
   `amount`, `price` and simulation time.
 - **The market-data bundle** -- a polars frame of OHLCV bars per instrument,
   daily or intraday, that the simulation read; `zipfolio.ziplime.execution_bars`
-  joins every fill and every order to it *as of* the simulation time, and
+  joins every fill and every order to it *as of* the simulation time -- the fill
+  with the open of the bar after it too, for the next-bar repricing -- and
   `daily_bars` folds it into sessions.
 - **The cost and execution models** -- `PerShare` / `PerDollar` commission with
   a per-order minimum, `FixedBasisPointsSlippage` with a volume limit,
@@ -268,7 +294,7 @@ on the sections that need it.
 | `cash` | cash at the end of each period | (same) |
 | `transactions` | rows of `id, order_id, dt, symbol, quantity, price` | Instruments, Transactions, Execution, Costs, Round Trips |
 | `orders` | rows of `id, created, dt, type, symbol, quantity, filled, commission, limit, stop, status, reason` | Execution, Trading Costs, Instruments |
-| `fill_bars` | `open, high, low, close, volume` indexed by fill `id` | Execution |
+| `fill_bars` | `open, high, low, close, volume`, optionally `next_open, next_date`, indexed by fill `id` | Execution, Next-Bar Fills |
 | `decision_prices` | `decision_price` indexed by order `id` | Execution (shortfall) |
 | `market_data` | rows of `symbol, day, price, volume` | Capacity, Portfolio Risk |
 | `cost_settings` | `commission_model, commission_per_share, commission_rate, commission_min_trade_cost, slippage_basis_points, slippage_volume_limit, price_used_in_order_execution, same_bar_execution, capital` | Trading Costs, Execution |
@@ -280,7 +306,8 @@ on the sections that need it.
 | `title` | the page title; defaults to `zipfolio.DEFAULT_TITLE` | header |
 | `market_timezone` | e.g. `"Europe/Moscow"`; defaults to `ZIPFOLIO_MARKET_TIMEZONE`, then New York | fill-time chart |
 
-`build_tearsheet` returns the titles of the sections that made it into the page.
+`build_tearsheet` returns the titles of the sections that made it into the page,
+in page order.
 
 ## Data the package fetches or ships
 

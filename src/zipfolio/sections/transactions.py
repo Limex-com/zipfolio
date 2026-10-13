@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from ..currency import money
-from ..page import Section
+from ..page import INFO, Section
 from ..style import STRATEGY_COLOR, chart
 from ..tables import Table
 
@@ -29,6 +29,10 @@ def build_transactions(returns, positions, transactions, market_timezone: str) -
         transactions, positions, ax=ax, color=STRATEGY_COLOR)))
     section.chart(chart(f"Transaction Time Distribution ({market_timezone})", lambda ax: plot_fill_times(
         transactions, market_timezone, ax), y="pct"))
+    annual = float(turnover.mean() * 252)
+    if np.isfinite(annual) and annual > 0:
+        section.finding(INFO, f"Turns the book over {annual:.1f} times a year",
+                        f"Trades on {transactions.index.normalize().nunique():,} of {len(returns):,} sessions.")
     return section
 
 

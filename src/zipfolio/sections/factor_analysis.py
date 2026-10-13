@@ -16,7 +16,7 @@ from ..factors import (
     risk_free_returns,
     ruonia,
 )
-from ..page import Section
+from ..page import INFO, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
 from ..tables import Table
 
@@ -125,6 +125,7 @@ def build_factor_analysis(returns: pd.Series, model: str = "ff5_mom",
         shown.loc[row, "t-stat"] = f"{estimates.loc[row, 't-stat']:.2f}"
         shown.loc[row, "p-value"] = _p_value(estimates.loc[row, "p-value"])
     section.table(Table(shown, None), title=f"Factor Exposures ({description})", first_header="Factor")
+    _alpha_finding(section, fit, names, model, description)
 
     residual_vol = float(np.std(fit.resid, ddof=len(fit.params)) * np.sqrt(252))
     fitted = pd.Series({
@@ -235,6 +236,22 @@ def build_factor_analysis(returns: pd.Series, model: str = "ff5_mom",
         'betas, and add daily returns up rather than compounding them, so the parts sum exactly '
         'to the strategy\'s return over the risk-free rate (the black line and diamonds).</p>')
     return section
+
+
+def _alpha_finding(section: Section, fit, names: list[str], model: str, description: str) -> None:
+    """Alpha and the exposures that matter, in a sentence."""
+    alpha, p = fit.params["const"] * 252, fit.pvalues["const"]
+    significant = p < 0.05
+    verdict = "significant" if significant else f"not significant (p = {p:.2f})"
+    status = OK if significant and alpha > 0 else WARN if significant else INFO
+    if model == "market":
+        market = description.split(": ", 1)[-1]
+        section.finding(status, f"Beta {fit.params[names[0]]:.2f} to {market}; alpha {alpha:+.1%} a year, {verdict}")
+        return
+    exposures = [f"{name} {fit.params[name]:.2f}" for name in names if fit.pvalues[name] < 0.05]
+    section.finding(status, f"Alpha {alpha:+.1%} a year after {description}, {verdict}",
+                    f"Significant exposures: {', '.join(exposures)}." if exposures else
+                    "No factor exposure is significant.")
 
 
 def _p_value(value: float) -> str:
