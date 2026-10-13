@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from ..page import INFO, WARN, Section
+from ..page import BAD, OK, WARN, Section
 from ..style import anchor_zero, chart, held_only, mark_isolated
 from ..tables import captured_tables
 
-#: Gross leverage above this is worth a line in the summary; above the second, a warning.
+#: Gross leverage above the first needs a look; above the second the result misleads -- borrowing is not modeled.
 LEVERAGE_NOTE, LEVERAGE_WARN = 1.05, 1.5
+#: A typical day's largest position above this share of the portfolio needs a look.
+LARGEST_POSITION = 0.25
 
 
 def build_positions(returns, positions) -> Section:
@@ -39,13 +41,14 @@ def build_positions(returns, positions) -> Section:
     largest = allocation.drop(columns="cash", errors="ignore").abs().max(axis="columns")
     held = largest[largest > 0]
     if len(held):
-        section.finding(INFO, "Largest position", f"{held.median():.0%} (max {held.max():.0%})",
+        section.finding(OK if held.median() <= LARGEST_POSITION else WARN, "Largest position, typical day",
+                        f"{held.median():.0%} (max {held.max():.0%})",
                         f"The largest position is {held.median():.0%} of the portfolio on a typical day, "
-                        f"{held.max():.0%} at its largest.")
+                        f"{held.max():.0%} at its largest. Over {LARGEST_POSITION:.0%} means one name can swing "
+                        "the result.")
     leverage = positions.drop(columns="cash", errors="ignore").abs().sum(axis="columns") / positions.sum(axis="columns")
-    if leverage.max() > LEVERAGE_NOTE:
-        section.finding(WARN if leverage.max() > LEVERAGE_WARN else INFO,
-                        "Max gross leverage", f"{leverage.max():.2f}x",
-                        f"{leverage.median():.2f}x on a typical day. Borrowing and shorting costs are not "
-                        "modeled.")
+    peak = float(leverage.max())
+    section.finding(BAD if peak > LEVERAGE_WARN else WARN if peak > LEVERAGE_NOTE else OK, "Max gross leverage",
+                    f"{peak:.2f}x", f"{leverage.median():.2f}x on a typical day. Above 1x the strategy borrows or "
+                    "shorts, and neither borrowing nor shorting costs are modeled.")
     return section

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..page import INFO, Section
+from ..page import OK, WARN, Section
 from ..style import BENCHMARK_COLOR, PALETTE, chart
 from ..tables import Table
 from .instruments import commission_by_day, instrument_pnl
@@ -15,6 +15,54 @@ TOP_DRAWDOWNS = 5
 NAMED = 8
 OTHER = "Other names"
 RESIDUAL = "Dividends, cash, rounding"
+#: Absolute drawdown that needs a look when there is no benchmark to compare with.
+DEEP_DRAWDOWN = -0.20
+#: Deeper than this needs a look whatever the benchmark did.
+VERY_DEEP_DRAWDOWN = -0.35
+#: Longest time below a previous peak before it needs a look.
+LONG_UNDERWATER_MONTHS = 12
+#: One name making this share of the worst drawdown or more needs a look.
+ONE_NAME_SHARE = 0.5
+
+
+def longest_underwater(returns: pd.Series) -> tuple[pd.Timedelta, bool]:
+    """The longest stretch below a previous high, peak to recovery, and whether it is still going on."""
+    wealth = (1 + returns).cumprod()
+    under = wealth < wealth.cummax() * (1 - 1e-12)
+    groups = list(under.groupby((~under).cumsum()))
+    longest, ongoing = pd.Timedelta(0), False
+    for position, (_, run) in enumerate(groups):
+        if not run.any():
+            continue
+        last = position == len(groups) - 1
+        end = run.index[-1] if last else groups[position + 1][1].index[0]
+        if end - run.index[0] > longest:
+            longest, ongoing = end - run.index[0], last
+    return longest, ongoing
+
+
+def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | None) -> None:
+    import empyrical as ep
+
+    depth = ep.max_drawdown(returns)
+    if benchmark is not None:
+        name = benchmark.name or "the benchmark"
+        market = ep.max_drawdown(benchmark)
+        section.finding(OK if depth >= market and depth >= VERY_DEEP_DRAWDOWN else WARN, f"Max drawdown vs {name}",
+                        f"{depth:.1%} vs {market:.1%}",
+                        f"The strategy's deepest fall from a peak against {name}'s over the same sessions. Deeper "
+                        f"than {name}'s, or than {VERY_DEEP_DRAWDOWN:.0%} whatever {name} did, needs a look.")
+    else:
+        section.finding(OK if depth >= DEEP_DRAWDOWN else WARN, "Max drawdown", f"{depth:.1%}",
+                        f"No benchmark to compare with; deeper than {DEEP_DRAWDOWN:.0%} needs a look.")
+    longest, ongoing = longest_underwater(returns)
+    if longest > pd.Timedelta(0):
+        months = longest.days / 30.44
+        section.finding(OK if months <= LONG_UNDERWATER_MONTHS else WARN, "Longest time below a peak",
+                        f"{months:.0f} months" + (", not recovered" if ongoing else ""),
+                        "From a high to the day the strategy was back above it"
+                        + (" -- it still is not, at the end of the backtest." if ongoing else ".")
+                        + f" Over {LONG_UNDERWATER_MONTHS} months needs a look: few would hold on that long.")
 
 
 def drawdown_attribution(returns: pd.Series, holdings: pd.DataFrame, transactions: pd.DataFrame,
@@ -61,11 +109,12 @@ def drawdown_attribution(returns: pd.Series, holdings: pd.DataFrame, transaction
     return pd.DataFrame(rows), pd.DataFrame(shares).fillna(0.0)
 
 
-def build_drawdowns(returns, holdings, transactions, orders=None, sectors=None) -> Section | None:
+def build_drawdowns(returns, holdings, transactions, orders=None, sectors=None, benchmark=None) -> Section | None:
     drawdowns, shares = drawdown_attribution(returns, holdings, transactions, orders)
     if drawdowns.empty:
         return None
     section = Section("Drawdowns")
+    _risk_findings(section, returns, benchmark)
     labels = [f"#{n + 1}  {row.Peak:%b %Y} - {row.Valley:%b %Y}  ({row.Depth:.1%})"
               for n, row in enumerate(drawdowns.itertuples())]
 
@@ -87,10 +136,13 @@ def build_drawdowns(returns, holdings, transactions, orders=None, sectors=None) 
     worst = shares.iloc[0].drop(RESIDUAL)
     worst = worst[worst.abs() > 1e-9].sort_values()  # names not held then contributed nothing
     first = drawdowns.iloc[0]
-    if len(worst) and worst.iloc[0] < 0:
-        section.finding(INFO, "Worst drawdown", f"{-abs(first['Depth']):.1%}, {first['Peak']:%b %Y}",
-                        f"From {first['Peak']:%b %Y} to {first['Valley']:%b %Y}; {worst.index[0]} cost "
-                        f"{abs(worst.iloc[0]) * 100:.1f} points of it.")
+    if len(worst) and worst.iloc[0] < 0 and first["Depth"] < 0:
+        share = worst.iloc[0] / first["Depth"]
+        section.finding(WARN if share >= ONE_NAME_SHARE else OK, "Worst drawdown from one name",
+                        f"{worst.index[0]}, {share:.0%} of it",
+                        f"The worst drawdown, {first['Depth']:.1%} from {first['Peak']:%b %Y} to "
+                        f"{first['Valley']:%b %Y}: {worst.index[0]} cost {abs(worst.iloc[0]) * 100:.1f} points of it. "
+                        f"One name making {ONE_NAME_SHARE:.0%} or more of it needs a look.")
     section.table(Table(worst.head(10).to_frame("Points of the Drawdown"), None, "{:.2%}".format),
                   title=f"Drawdown #1, by Name ({drawdowns.iloc[0]['Depth']:.1%})", first_header="Symbol")
 

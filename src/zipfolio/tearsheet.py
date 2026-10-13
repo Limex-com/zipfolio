@@ -168,7 +168,8 @@ def build_tearsheet(
             ("Positions", lambda: build_positions(returns, positions)),
             ("Instruments", lambda: build_instruments(returns, holdings, positions, transactions, orders)),
             ("Long and Short", lambda: build_long_short(returns, holdings, transactions, orders)),
-            ("Drawdowns", lambda: build_drawdowns(returns, holdings, transactions, orders, sectors or None)),
+            ("Drawdowns", lambda: build_drawdowns(returns, holdings, transactions, orders, sectors or None,
+                                                         benchmark)),
         ]
         if sectors:
             builders.append(("Sector Analysis", lambda: build_sector_analysis(

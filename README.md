@@ -75,8 +75,9 @@ The page opens with a **summary** in the look of QuantStats Pro's health
 summary: a score (checks passed out of checks made), counts of checks that hold
 up, need a look or are critical, and one table of verdicts -- measure, value,
 badge -- under the part of the report each belongs to, each row linked to its
-section with the reasoning on hover. Facts that are not verdicts (worst
-drawdown, turnover, largest position) go on one line under it. The sections
+section with the reasoning on hover. Facts that are not verdicts (alpha that
+is not significant, turnover, the longest losing streak) go on one line under it.
+The checks and their thresholds are constants at the top of each section's module. The sections
 follow in four parts, each the question a reader brings:
 
 **I. Where the return came from**

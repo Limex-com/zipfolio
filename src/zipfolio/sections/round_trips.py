@@ -11,7 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..currency import money, unit
-from ..page import OK, WARN, Section
+from ..page import INFO, OK, WARN, Section
 from ..style import LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table, captured_tables, present
 
@@ -96,6 +96,7 @@ def build_round_trips(returns, positions, transactions) -> Section | None:
     section.chart(chart("Return per Trade", histogram(trades["rt_returns"].dropna() * 100,
                                                       "Return on what the shares cost, %")))
 
+    _open_and_streak_findings(section, trades, positions)
     pnl = trades["pnl"].astype(float)
     wins, losses = pnl[pnl > 0].sum(), -pnl[pnl < 0].sum()
     factor = wins / losses if losses else float("inf")
@@ -106,6 +107,32 @@ def build_round_trips(returns, positions, transactions) -> Section | None:
                     "The profit factor is what the winning trades made over what the losing ones lost: "
                     "under 1, the trades lose money on balance.")
     return section
+
+
+#: Profit still on paper at the end -- positions counted as sold at the last price -- above this share needs a look.
+OPEN_SHARE = 0.3
+
+
+def losing_streak(pnl: pd.Series) -> int:
+    """The most losing trades in a row, in the order they closed."""
+    losing = (pnl < 0).astype(int)
+    return int(losing.groupby((losing == 0).cumsum()).sum().max()) if len(losing) else 0
+
+
+def _open_and_streak_findings(section: Section, trades: pd.DataFrame, positions: pd.DataFrame) -> None:
+    closing = positions.index[-1] + pd.Timedelta(seconds=1)  # where pyfolio closes what is still held
+    still_open = trades["close_dt"] == closing
+    total = float(trades["pnl"].sum())
+    paper = float(trades.loc[still_open, "pnl"].sum())
+    if total > 0:
+        share = max(paper, 0.0) / total
+        section.finding(OK if share <= OPEN_SHARE else WARN, "Profit still open at the end", f"{share:.0%}",
+                        f"{int(still_open.sum()):,} positions were still held when the backtest ended; they are "
+                        f"counted as sold at the last price, for {money(paper, 0)} of the {money(total, 0)} net. "
+                        f"Over {OPEN_SHARE:.0%} means much of the result is a paper gain.")
+    streak = losing_streak(trades.sort_values("close_dt")["pnl"].astype(float))
+    section.finding(INFO, "Longest losing streak", f"{streak} trades",
+                    "The most losing trades in a row, in the order they closed.")
 
 
 def _tidy_round_trip_table(table: "Table") -> "Table":
