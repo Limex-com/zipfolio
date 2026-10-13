@@ -75,7 +75,7 @@ The default title is "Zipfolio Tearsheet: Portfolio, Execution & Cost Analysis"
 | **Positions** | the strategy traded | exposure, top positions, long/short concentration, holdings, gross leverage |
 | **Instruments** | traded | each name's PnL, contribution, weight, days held, trade stats; contribution by year; daily and round-trip return distributions per name; cumulative PnL by name |
 | **Sector Analysis** | a held name has a sector | allocation over time, average and peak, profit attribution by GICS sector |
-| **Factor Analysis** | a factor model is set | Fama-French 5 + momentum betas with Newey-West t-stats, alpha, fit, attribution (overall and by year), rolling betas, return decomposition |
+| **Factor Analysis** | a factor model is set | Fama-French 5 + momentum (US) or a market model against the benchmark over RUONIA (Moscow): betas with Newey-West t-stats, alpha, fit, attribution (overall and by year), rolling betas, return decomposition |
 | **Portfolio Risk** | always (more when traded) | VaR/CVaR/EVaR, drawdown-at-risk/CDaR/EDaR, Ulcer index, Gini mean difference; rolling tail risk; risk contribution per holding; clustered correlations; the same names under four allocation rules, walk-forward |
 | **Transactions** | traded | trading frequency, fill sizes, buys and sells, turnover, volume, fill times on the market's own clock |
 | **Execution** | orders are given | how the backtest fills orders, realism checks, orders by type, fill statistics, fill price within the bar and against its typical price, share of bar volume, implementation shortfall, waits |
@@ -86,6 +86,43 @@ The default title is "Zipfolio Tearsheet: Portfolio, Execution & Cost Analysis"
 A section that cannot be computed becomes a short note, a chart that fails is
 left out, and both are logged; the page fails only if nothing at all can be
 reported.
+
+## US and Moscow
+
+Zipfolio reports a US book and a Moscow book each in its own terms:
+
+| | US | Moscow |
+| --- | --- | --- |
+| Currency (`currency=`) | `"USD"`: `$1,234.50`, capacity at a $1m base | `"RUB"`: `1,234.50 ₽`, capacity at a 100m ₽ base |
+| Factor analysis (`factor_model=`) | `"ff5_mom"`: Fama-French 5 + momentum | `"market"`: a market model against the benchmark -- IMOEX -- over RUONIA |
+| Risk-free rate | Fama-French `RF` (one-month T-bill) | RUONIA, the Bank of Russia's overnight rate (`risk_free="ruonia"`) |
+| Sectors | GICS, from a table you supply (`us_sector_mappings`) | the Moscow Exchange sector indices -- MOEXOG, MOEXFN, MOEXMM... (`moex_sector_mappings`) |
+| Fill-time chart | New York clock | Moscow clock (`market_timezone="Europe/Moscow"`) |
+
+There are no published Fama-French factors for Moscow, so the factor analysis
+there is a one-factor market model: the strategy's return over RUONIA
+regressed on IMOEX's, with the same exposures, alpha, attribution, rolling beta
+and decomposition. The risk-free rate matters more there than anywhere: RUONIA
+has run between 4% and 21% a year, and a regression without it would report
+the rate as alpha. RUONIA is read from the Bank of Russia's `DailyInfo` web
+service and cached for a day; each session earns the rate published the day
+before, over the calendar days since the previous session (actual/365).
+
+Moscow sectors come from the exchange's own sector indices, read from its ISS
+service when a report is built and cached for a week: Oil & Gas (MOEXOG),
+Electric Utilities (MOEXEU), Telecommunications (MOEXTL), Metals & Mining
+(MOEXMM), Financials (MOEXFN), Consumer (MOEXCN), Chemicals (MOEXCH),
+Transportation (MOEXTN), Information Technology (MOEXIT), Real Estate (MOEXRE).
+Membership is today's, not the backtest's.
+
+```python
+from zipfolio import build_tearsheet, moex_sector_mappings
+
+build_tearsheet("report.html", returns, imoex.rename("IMOEX"), ...,
+                factor_model="market", risk_free="ruonia", currency="RUB",
+                market_timezone="Europe/Moscow",
+                sector_mappings=moex_sector_mappings(["SBER@MISX", "GAZP@MISX", ...]))
+```
 
 ## Zipfolio and pyfolio
 
@@ -231,7 +268,9 @@ on the sections that need it.
 | `market_data` | rows of `symbol, day, price, volume` | Capacity, Portfolio Risk |
 | `cost_settings` | `commission_model, commission_per_share, commission_rate, commission_min_trade_cost, slippage_basis_points, slippage_volume_limit, price_used_in_order_execution, same_bar_execution, capital` | Trading Costs, Execution |
 | `sector_mappings` | `{symbol: sector}`; `us_sector_mappings(["AAPL@XNGS", ...], table=...)` gives GICS sectors for US listings from your table | Sector Analysis |
-| `factor_model` | `"ff5_mom"` (default), `"ff5"`, `"ff3"`, `"ff3_mom"` or `None` | Factor Analysis |
+| `factor_model` | `"ff5_mom"` (default), `"ff5"`, `"ff3"`, `"ff3_mom"`, `"market"` or `None` | Factor Analysis |
+| `risk_free` | for `"market"`: `"ruonia"` (default) or a series of a rate in percent a year | Factor Analysis |
+| `currency` | `"USD"` (default), `"RUB"`, `"EUR"` | every amount, the capacity base |
 | `factor_data` | your own factor returns (decimals, with `RF`), instead of the download | Factor Analysis |
 | `title` | the page title; defaults to `zipfolio.DEFAULT_TITLE` | header |
 | `market_timezone` | e.g. `"Europe/Moscow"`; defaults to `ZIPFOLIO_MARKET_TIMEZONE`, then New York | fill-time chart |
@@ -240,6 +279,10 @@ on the sections that need it.
 
 ## Data the package fetches or ships
 
+- **RUONIA** is read from the Bank of Russia's `DailyInfo` web service (cached
+  a day) and the **Moscow sector indices** from the exchange's ISS service
+  (cached a week), both under the same cache directory; unreachable with
+  nothing cached, the section that needs them says so or is left out.
 - **Fama-French factors** are downloaded from Kenneth French's
   [data library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html)
   -- the same files `pandas_datareader.famafrench` reads, without the

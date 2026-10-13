@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from ..currency import money, unit
 from ..page import Section
 from ..style import LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table, captured_tables, present
@@ -52,7 +53,7 @@ def build_round_trips(returns, positions, transactions) -> Section | None:
         return draw
 
     section.chart(chart("Holding Time", histogram([x.days for x in trades["duration"]], "Days")))
-    section.chart(chart("PnL per Round Trip", histogram(trades["pnl"], "PnL, $")))
+    section.chart(chart("PnL per Round Trip", histogram(trades["pnl"], f"PnL, {unit()}")))
     section.chart(chart("Round Trip Returns", histogram(trades["returns"].dropna() * 100, "Return, %")))
     return section
 
@@ -62,7 +63,8 @@ def _tidy_round_trip_table(table: "Table") -> "Table":
 
     pyfolio formats a whole table one way: the trade counts come out as
     "146.00", every row of the PnL table gets a dollar sign -- the profit factor
-    and the win/loss ratio included -- and a loss reads "$-5067.13".
+    and the win/loss ratio included -- and a loss reads "$-5067.13", in
+    dollars whatever the currency.
     """
     frame = table.frame.astype(object)
     for row in frame.index:
@@ -76,5 +78,5 @@ def _tidy_round_trip_table(table: "Table") -> "Table":
                 frame.loc[row] = frame.loc[row].map(lambda v: f"{v:.2f}" if present(v) else v)
             else:
                 frame.loc[row] = frame.loc[row].map(
-                    lambda v: f"{'-' if v < 0 else ''}${abs(v):,.2f}" if present(v) else v)
+                    lambda v: money(v) if present(v) else v)
     return Table(frame, table.name, table.float_format, table.formatters, table.header_rows)

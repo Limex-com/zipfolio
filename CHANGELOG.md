@@ -8,6 +8,9 @@ report next to the QuantStats tearsheet of every backtest.
 - `build_tearsheet`: one self-contained HTML page in the QuantStats Pro look --
   Performance, Positions, Instruments, Sector Analysis, Factor Analysis,
   Portfolio Risk, Transactions, Execution, Trading Costs, Round Trips, Capacity.
+- Moscow books: amounts in roubles (`currency="RUB"`), a market model against
+  IMOEX over RUONIA from the Bank of Russia (`factor_model="market"`), and
+  sectors from the Moscow Exchange sector indices (`moex_sector_mappings`).
 - `zipfolio.ziplime`: daily bars, per-fill bars and decision prices, and order
   types read from a ziplime run.
 - Fama-French 3/5 factors and momentum, daily, from Kenneth French's data

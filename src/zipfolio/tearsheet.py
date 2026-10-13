@@ -9,6 +9,7 @@ from typing import Callable
 
 import pandas as pd
 
+from .currency import using_currency
 from .inputs import (
     daily_returns,
     market_data_frame,
@@ -19,7 +20,7 @@ from .inputs import (
 from .page import DEFAULT_TITLE, Section, page_html
 from .sections.capacity import build_capacity
 from .sections.execution import build_execution
-from .sections.factor_analysis import build_factor_analysis
+from .sections.factor_analysis import build_factor_analysis, build_market_model_analysis
 from .sections.instruments import build_instruments
 from .sections.performance import build_performance
 from .sections.portfolio_risk import build_portfolio_risk
@@ -49,6 +50,8 @@ def build_tearsheet(
     decision_prices: pd.DataFrame | None = None,
     factor_model: str | None = "ff5_mom",
     factor_data: pd.DataFrame | None = None,
+    risk_free: str | pd.Series | None = "ruonia",
+    currency: str = "USD",
 ) -> list[str]:
     """Write the Zipfolio tearsheet for one backtest to ``output``.
 
@@ -62,9 +65,13 @@ def build_tearsheet(
       contribution, read mark-to-market from the book and the fills, and the
       spread of its daily and round-trip returns;
     * **Sector Analysis** -- when ``sector_mappings`` classifies a held name;
-    * **Factor Analysis** -- when ``factor_model`` names one (``"ff5_mom"`` by
-      default; ``None`` for a book the US factors do not describe): exposures,
-      alpha, attribution, rolling betas. ``factor_data`` replaces the download;
+    * **Factor Analysis** -- when ``factor_model`` names one: ``"ff5_mom"`` (the
+      default), ``"ff5"``, ``"ff3"`` or ``"ff3_mom"`` for Fama-French, which
+      describe US stocks; ``"market"`` for a market model against the benchmark
+      over ``risk_free`` (``"ruonia"`` -- the Bank of Russia's rate -- or a
+      series of a rate in percent a year), which is what a Moscow book gets;
+      ``None`` for none. Exposures, alpha, attribution, rolling betas.
+      ``factor_data`` replaces the Fama-French download;
     * **Execution** -- when the strategy traded and ``orders`` are given: how
       the backtest fills orders, realism checks of every fill against its bar
       (``fill_bars``) and of every order against the price it was decided at
@@ -84,6 +91,9 @@ def build_tearsheet(
     when there is nothing to report at all. ``market_timezone`` places fills on
     the clock of the transaction-time chart; it defaults to
     ``ZIPFOLIO_MARKET_TIMEZONE``, then New York.
+
+    ``currency`` (``"USD"``, ``"RUB"``, ``"EUR"``) is how every amount is
+    written, and sets the capital base of the capacity analysis.
 
     Returns the titles of the sections that made it into the page.
     """
@@ -126,7 +136,9 @@ def build_tearsheet(
         if sectors:
             builders.append(("Sector Analysis", lambda: build_sector_analysis(
                 returns, positions, transactions, sectors)))
-    if factor_model:
+    if factor_model == "market":
+        builders.append(("Factor Analysis", lambda: build_market_model_analysis(returns, benchmark, risk_free)))
+    elif factor_model:
         builders.append(("Factor Analysis", lambda: build_factor_analysis(returns, factor_model, factor_data)))
     builders.append(("Portfolio Risk", lambda: build_portfolio_risk(returns, benchmark, positions, bars)))
     if positions is not None:
@@ -146,7 +158,7 @@ def build_tearsheet(
     # whose frequency it can infer -- a window with no holiday in it -- in
     # period ordinals, and anything pyfolio adds with matplotlib directly on
     # the same axis lands off-screen: the exposure panel came out empty that way.
-    with plt.rc_context(rc), pd.plotting.plot_params.use("x_compat", True):
+    with plt.rc_context(rc), pd.plotting.plot_params.use("x_compat", True), using_currency(currency):
         for name, build in builders:
             try:
                 section = build()

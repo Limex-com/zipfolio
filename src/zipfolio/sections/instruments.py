@@ -7,6 +7,7 @@ import traceback
 import numpy as np
 import pandas as pd
 
+from ..currency import money_formatter, unit
 from ..inputs import utc_dates
 from ..page import Section
 from ..style import LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
@@ -94,7 +95,7 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
         summary["Worst Trade"] = by_symbol.min()
     summary = summary.sort_values("Net PnL", ascending=False)
 
-    money = "${:,.2f}".format
+    money = money_formatter()
     percent = "{:.2%}".format
     section.table(
         Table(summary, None, None, {
@@ -143,7 +144,7 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
                     ls="--", label=f"Other {len(others)}")
         ax.axhline(0, ls="--", lw=1, color="black", zorder=1)
         ax.legend(loc="upper left", ncol=2)
-        ax.set_ylabel("Cumulative PnL, $")
+        ax.set_ylabel(f"Cumulative PnL, {unit()}")
 
     section.chart(chart("Cumulative PnL by Instrument", cumulative, height=4.0))
 

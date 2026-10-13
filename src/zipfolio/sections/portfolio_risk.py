@@ -216,6 +216,15 @@ _WALK_FORWARD_TRAIN = 252
 _WALK_FORWARD_TEST = 21
 
 
+def _max_sharpe(MeanRisk, ObjectiveFunction, EqualWeighted):
+    """Mean-variance at the highest Sharpe ratio, equal weight where none can be had."""
+    import inspect
+
+    if "fallback" in inspect.signature(MeanRisk.__init__).parameters:
+        return MeanRisk(objective_function=ObjectiveFunction.MAXIMIZE_RATIO, fallback=EqualWeighted())
+    return MeanRisk(objective_function=ObjectiveFunction.MAXIMIZE_RATIO)
+
+
 def _alternative_allocations(section: Section, returns: pd.Series, asset_returns: pd.DataFrame) -> None:
     """The same names under four standard allocation rules, refitted walk-forward."""
     import empyrical as ep
@@ -233,7 +242,9 @@ def _alternative_allocations(section: Section, returns: pd.Series, asset_returns
         "Equal Weighted": EqualWeighted(),
         "Inverse Volatility": InverseVolatility(),
         "Hierarchical Risk Parity": HierarchicalRiskParity(),
-        "Max Sharpe (Mean-Variance)": MeanRisk(objective_function=ObjectiveFunction.MAXIMIZE_RATIO),
+        # In a window where no name is expected to beat cash -- 2022 in Moscow --
+        # there is no ratio to maximise; hold the names equally there instead.
+        "Max Sharpe (Mean-Variance)": _max_sharpe(MeanRisk, ObjectiveFunction, EqualWeighted),
     }
     curves = {}
     for name, rule in rules.items():
@@ -259,7 +270,7 @@ def _alternative_allocations(section: Section, returns: pd.Series, asset_returns
         f'held for the next {_WALK_FORWARD_TEST}, over the names this strategy traded, from '
         f'{window[0]:%-d %b, %Y}, without trading costs. The names themselves come from the '
         'strategy, so this compares its timing and sizing with simple rules -- not its choice '
-        'of stocks.</p>')
+        'of stocks. Where no name is expected to beat cash, max Sharpe holds them equally.</p>')
 
     colors = [STRATEGY_COLOR, BENCHMARK_COLOR, "#4FA487", "#559CAD", "#9B59B6"]
 

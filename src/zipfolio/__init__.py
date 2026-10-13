@@ -37,14 +37,27 @@ without skfolio loses that one section, not the report.
 
 __version__ = "0.1.0"
 
+from .currency import CURRENCIES  # noqa: E402
+from .factors import market_factors, risk_free_returns, ruonia  # noqa: E402
 from .inputs import daily_returns, market_data_frame, positions_in_dollars, transactions_frame  # noqa: E402
 from .page import DEFAULT_TITLE, REPOSITORY_URL  # noqa: E402
-from .sectors import GICS_SECTORS, UNCLASSIFIED, US_MICS, us_sector_mappings  # noqa: E402
+from .sectors import (  # noqa: E402
+    GICS_SECTORS,
+    MOEX_MICS,
+    MOEX_SECTOR_INDICES,
+    UNCLASSIFIED,
+    US_MICS,
+    moex_sector_mappings,
+    us_sector_mappings,
+)
 from .tearsheet import build_tearsheet  # noqa: E402
 
 __all__ = [
+    "CURRENCIES",
     "DEFAULT_TITLE",
     "GICS_SECTORS",
+    "MOEX_MICS",
+    "MOEX_SECTOR_INDICES",
     "REPOSITORY_URL",
     "UNCLASSIFIED",
     "US_MICS",
@@ -52,7 +65,11 @@ __all__ = [
     "build_tearsheet",
     "daily_returns",
     "market_data_frame",
+    "market_factors",
+    "moex_sector_mappings",
     "positions_in_dollars",
+    "risk_free_returns",
+    "ruonia",
     "transactions_frame",
     "us_sector_mappings",
 ]

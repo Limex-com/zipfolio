@@ -14,6 +14,7 @@ import html
 import numpy as np
 import pandas as pd
 
+from ..currency import money
 from ..page import Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table
@@ -288,7 +289,7 @@ def _statistics(fills: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
         "Orders": f"{len(book):,}",
         "Fills": f"{len(fills):,}",
         "Fills per order": f"{len(fills) / len(book):.2f}" if len(book) else "-",
-        "Traded value": f"${fills['value'].sum():,.0f}",
+        "Traded value": money(fills['value'].sum(), 0),
     }
     waited = book["delay"].dropna()
     if len(waited):

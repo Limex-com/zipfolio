@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ..currency import money, money_formatter, unit
 from ..inputs import utc_dates
 from ..page import Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart, color_mix
@@ -67,10 +68,10 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
                   first_header="Parameter")
 
     summary = {
-        "Commissions": f"${total_commission:,.2f}",
-        "Slippage (reconstructed)": f"${total_slippage:,.2f}",
-        "Total trading costs": f"${total_costs:,.2f}",
-        "Traded value": f"${traded_value:,.0f}",
+        "Commissions": money(total_commission),
+        "Slippage (reconstructed)": money(total_slippage),
+        "Total trading costs": money(total_costs),
+        "Traded value": money(traded_value, 0),
         "Costs per traded value": f"{total_costs / traded_value * 1e4:,.2f} bps" if traded_value else "-",
         "Costs vs starting capital": f"{total_costs / starting_capital:.2%}" if starting_capital else "-",
         "Costs vs gross profit": f"{total_costs / gross_profit:.2%}" if gross_profit > 0 else "-",
@@ -79,8 +80,8 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
         "Annual drag from costs": f"{(gross_annual - net_annual) * 100:.2f} pp",
         "Orders charged": f"{order_count:,}",
         "Fills": f"{len(transactions):,}",
-        "Avg. commission per order": f"${total_commission / order_count:,.2f}" if order_count else "-",
-        "Avg. commission per share": (f"${total_commission / transactions['amount'].abs().sum():,.4f}"
+        "Avg. commission per order": money(total_commission / order_count) if order_count else "-",
+        "Avg. commission per share": (money(total_commission / transactions['amount'].abs().sum(), 4)
                                       if total_commission else "-"),
     }
     minimum = float(settings.get("commission_min_trade_cost") or 0.0)
@@ -93,8 +94,8 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
     by_symbol["Total"] = by_symbol.sum(axis="columns")
     by_symbol["Share"] = by_symbol["Total"] / by_symbol["Total"].sum() if by_symbol["Total"].sum() else 0.0
     by_symbol = by_symbol.sort_values("Total", ascending=False).head(15)
-    money = "${:,.2f}".format
-    section.table(Table(by_symbol, None, None, {"Commission": money, "Slippage": money, "Total": money,
+    money_column = money_formatter()
+    section.table(Table(by_symbol, None, None, {"Commission": money_column, "Slippage": money_column, "Total": money_column,
                                                  "Share": "{:.1%}".format}),
                   title="Costs by Symbol", first_header="Symbol")
 
@@ -105,7 +106,7 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
         ax.stackplot(stacked.index, stacked["Commission"], stacked["Slippage"],
                      labels=["Commission", "Slippage"], colors=[BENCHMARK_COLOR, LOSS_COLOR], alpha=0.75)
         ax.legend(loc="upper left")
-        ax.set_ylabel("Cumulative cost, $")
+        ax.set_ylabel(f"Cumulative cost, {unit()}")
 
     def monthly(ax):
         months = daily.resample("ME").sum()
@@ -113,7 +114,7 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
         ax.bar(months.index, months["Slippage"], width=20, bottom=months["Commission"], color=LOSS_COLOR,
                label="Slippage")
         ax.legend(loc="upper left")
-        ax.set_ylabel("Cost per month, $")
+        ax.set_ylabel(f"Cost per month, {unit()}")
 
     def before_after(ax):
         ax.plot(ep.cum_returns(gross_returns, 1.0), color=BENCHMARK_COLOR, lw=1.2, ls="--", label="Before costs")
@@ -161,10 +162,10 @@ def cost_model_text(settings: dict) -> list[str]:
     else:
         per_share = float(settings.get("commission_per_share") or 0.0)
         minimum = float(settings.get("commission_min_trade_cost") or 0.0)
-        floor = (f", and never less than ${minimum:,.2f} per order -- so a small order pays the "
+        floor = (f", and never less than {money(minimum)} per order -- so a small order pays the "
                  "minimum, not its per-share amount" if minimum > 0 else ", with no minimum per order")
         lines.append(
-            f"<b>Commission</b> is ${per_share:,.4f} per share{floor} (ziplime's <code>PerShare</code> "
+            f"<b>Commission</b> is {money(per_share, 4)} per share{floor} (ziplime's <code>PerShare</code> "
             "model). It is charged to the order as it fills and comes out of cash; it is not part "
             "of the fill price.")
     bps = float(settings.get("slippage_basis_points") or 0.0)
@@ -207,13 +208,13 @@ def _cost_settings_table(settings: dict) -> pd.Series:
         rate = settings.get("commission_per_share") if rate is None else rate
         rows["Commission rate"] = f"{float(rate):.4%} of value"
     else:
-        rows["Commission per share"] = f"${float(settings.get('commission_per_share') or 0):,.4f}"
-        rows["Minimum per order"] = f"${float(settings.get('commission_min_trade_cost') or 0):,.2f}"
+        rows["Commission per share"] = money(float(settings.get('commission_per_share') or 0), 4)
+        rows["Minimum per order"] = money(float(settings.get('commission_min_trade_cost') or 0))
     rows["Slippage"] = f"{float(settings.get('slippage_basis_points') or 0):g} bps"
     if settings.get("slippage_volume_limit") is not None:
         rows["Volume limit"] = f"{float(settings['slippage_volume_limit']):.0%} of bar volume"
     rows["Fill price"] = f"Bar {settings.get('price_used_in_order_execution') or 'close'}"
     rows["Fills on"] = "Same bar" if settings.get("same_bar_execution", True) else "Next bar"
     if settings.get("capital"):
-        rows["Starting capital"] = f"${float(settings['capital']):,.0f}"
+        rows["Starting capital"] = money(float(settings['capital']), 0)
     return pd.Series(rows)

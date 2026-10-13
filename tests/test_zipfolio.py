@@ -801,3 +801,136 @@ def test_a_one_session_holding_still_shows(pyfolio):
     assert offsets.tolist() == [[1.0, 0.3]], "only the point with no neighbour gets a dot"
     plt.close(figure)
 
+
+
+# ----------------------------------------------------------------------------
+# Moscow: roubles, MOEX sectors, a market model against IMOEX over RUONIA.
+# ----------------------------------------------------------------------------
+
+def test_money_is_written_in_the_report_currency():
+    from zipfolio.currency import millions, money, using_currency
+
+    assert money(-5067.13) == "-$5,067.13"
+    with using_currency("RUB"):
+        assert money(1250.5) == "1,250.50 \u20bd"
+        assert money(-3, 0) == "-3 \u20bd"
+        assert millions(1e8) == "100m \u20bd"
+    assert money(1) == "$1.00", "the currency is the page's, and only for as long as it is built"
+
+
+def test_risk_free_accrues_the_day_before_rate_over_calendar_days():
+    from zipfolio.factors import risk_free_returns
+
+    rate = pd.Series([10.0, 20.0], index=pd.DatetimeIndex(["2024-03-01", "2024-03-04"], tz="UTC"))
+    sessions = pd.DatetimeIndex(["2024-03-01", "2024-03-04", "2024-03-05"], tz="UTC")
+
+    rf = risk_free_returns(rate, sessions)
+
+    assert rf.loc["2024-03-04"] == pytest.approx(0.10 * 3 / 365), "Monday earns Friday's rate for three days"
+    assert rf.loc["2024-03-05"] == pytest.approx(0.20 * 1 / 365), "not a rate published after the day"
+
+
+def test_ruonia_is_read_from_the_bank_of_russia_reply(monkeypatch, tmp_path):
+    import zipfolio.factors as factors
+
+    reply = (b'<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+             b'<soap:Body><RuoniaResponse xmlns="http://web.cbr.ru/"><RuoniaResult><diffgr:diffgram '
+             b'xmlns:diffgr="urn:schemas-microsoft-com:xml-diffgram-v1"><Ruonia xmlns="">'
+             b'<ro><D0>2026-08-03T00:00:00+03:00</D0><ruo>13.80</ruo><vol>500</vol></ro>'
+             b'<ro><D0>2026-08-04T00:00:00+03:00</D0><ruo>13.75</ruo><vol>510</vol></ro>'
+             b'</Ruonia></diffgr:diffgram></RuoniaResult></RuoniaResponse></soap:Body></soap:Envelope>')
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return reply
+
+    monkeypatch.setattr(factors.urllib.request, "urlopen", lambda request, timeout=None: Reply())
+    rate = factors.ruonia(cache_dir=tmp_path)
+
+    assert rate.tolist() == [13.80, 13.75]
+    assert str(rate.index[0].date()) == "2026-08-03"
+    assert (tmp_path / "ruonia.xml").exists(), "cached for the next report"
+
+
+def test_the_market_model_keeps_the_rate_out_of_alpha(pyfolio):
+    from zipfolio.sections.factor_analysis import build_market_model_analysis
+
+    days = pd.bdate_range("2023-01-02", "2024-12-31", tz="UTC")
+    rng = np.random.default_rng(9)
+    imoex = pd.Series(rng.normal(0.0004, 0.012, len(days)), index=days, name="IMOEX")
+    rate = pd.Series(16.0, index=days, name="RUONIA")
+    from zipfolio.factors import risk_free_returns
+
+    rf = risk_free_returns(rate, days)
+    strategy = rf + 0.8 * (imoex - rf) + rng.normal(0, 0.002, len(days))
+
+    section = build_market_model_analysis(strategy, imoex, rate)
+
+    import re
+
+    table = section.side[0]
+    assert "Market model: IMOEX over RUONIA" in table
+    beta = float(re.search(r"<td>Mkt-RF</td><td>(-?[\d.]+)</td>", table).group(1))
+    alpha = float(re.search(r"<td>Alpha \(annualized\)</td><td>(-?[\d.]+)%</td>", table).group(1))
+    assert beta == pytest.approx(0.8, abs=0.03)
+    assert abs(alpha) < 3, "a 16% rate left in the regression would show up here as alpha"
+
+
+def test_no_benchmark_no_market_model(pyfolio):
+    from zipfolio.sections.factor_analysis import build_market_model_analysis
+
+    days = pd.bdate_range("2023-01-02", "2023-06-30", tz="UTC")
+    section = build_market_model_analysis(pd.Series(0.001, index=days), None, None)
+    assert "has none" in section.side[0]
+
+
+def test_moex_sectors_come_from_the_sector_indices(monkeypatch, tmp_path):
+    import json
+
+    import zipfolio.sectors as sectors
+
+    members = {"MOEXFN": ["SBER", "VTBR"], "MOEXOG": ["GAZP"]}
+
+    class Reply:
+        def __init__(self, url):
+            self.index = next((name for name in sectors.MOEX_SECTOR_INDICES if f"/{name}.json" in url), None)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            rows = [["x", "d", ticker] for ticker in members.get(self.index, [])]
+            return json.dumps({"analytics": {"columns": ["indexid", "tradedate", "ticker"], "data": rows}}).encode()
+
+    monkeypatch.setattr(sectors.urllib.request, "urlopen", lambda url, timeout=None: Reply(url))
+    found = sectors.moex_sector_mappings(["SBER@MISX", "GAZP@MISX", "AAPL@XNGS", "IMOEX@RTSX"], cache_dir=tmp_path)
+
+    assert found == {"SBER": "Financials", "GAZP": "Oil & Gas"}
+    assert (tmp_path / "moex_sectors.json").exists()
+
+
+def test_a_rouble_report(pyfolio, tmp_path):
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    benchmark = pd.Series(np.random.default_rng(1).normal(0.0003, 0.009, len(closes)), index=closes, name="IMOEX")
+    rate = pd.Series(16.0, index=daily_returns(returns).index, name="RUONIA")
+    output = tmp_path / "zipfolio.html"
+
+    built = build_tearsheet(output, returns, benchmark, records, cash, fills, orders=orders_for(fills),
+                            market_data=daily_bars_for(closes, ["AAPL@XNAS", "MSFT@XNAS"]),
+                            factor_model="market", risk_free=rate, currency="RUB")
+
+    assert "Factor Analysis" in built and "Capacity" in built
+    page = output.read_text(encoding="utf-8")
+    assert "Market model: IMOEX over RUONIA" in page
+    assert "\u20bd" in page and "Traded value" in page
+    assert "100m \u20bd capital base" in page

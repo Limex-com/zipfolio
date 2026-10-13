@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from ..currency import currency, millions
 from ..page import Section
 from ..style import chart
 from ..tables import Table
@@ -24,16 +25,17 @@ def build_capacity(returns, positions, transactions, market_data) -> Section:
     from pyfolio import capacity, plotting
 
     section = Section("Capacity")
+    base = currency().capacity_base
     original = capacity.daily_txns_with_bar_data
     capacity.daily_txns_with_bar_data = _daily_txns_with_bar_data
     try:
         last_n_days = 126
         section.side.append(
-            '<p class="explain">At a constant $1m capital base, taking at most 20% of '
+            f'<p class="explain">At a constant {millions(base)} capital base, taking at most 20% of '
             'a day\'s volume, with the trailing 5-day mean as that volume.</p>')
         for label, window in (("Whole Backtest", None), (f"Last {last_n_days} Sessions", last_n_days)):
             days = capacity.get_max_days_to_liquidate_by_ticker(
-                positions, market_data, max_bar_consumption=0.2, capital_base=1e6,
+                positions, market_data, max_bar_consumption=0.2, capital_base=base,
                 mean_volume_window=5, last_n_days=window)
             section.table(
                 Table(days[days["days_to_liquidate"] > 1], None, None,
@@ -49,9 +51,14 @@ def build_capacity(returns, positions, transactions, market_data) -> Section:
                 rename={"date": "Date", "max_pct_bar_consumed": "Of Volume"})
 
         starting_capital = positions.iloc[0].sum() / (1 + returns.iloc[0])
-        section.chart(chart("Capital Base Performance Sweep", lambda ax: plotting.plot_capacity_sweep(
-            returns, transactions, market_data, starting_capital,
-            min_pv=100000, max_pv=300000000, step_size=1000000, ax=ax), height=3.5))
+        def sweep(ax):
+            # pyfolio steps through range(): whole units of the currency.
+            plotting.plot_capacity_sweep(
+                returns, transactions, market_data, starting_capital,
+                min_pv=int(base / 10), max_pv=int(base * 300), step_size=int(base), ax=ax)
+            ax.set_xlabel(f"Capital base, millions of {currency().code}")
+
+        section.chart(chart("Capital Base Performance Sweep", sweep, height=3.5))
     finally:
         capacity.daily_txns_with_bar_data = original
     return section

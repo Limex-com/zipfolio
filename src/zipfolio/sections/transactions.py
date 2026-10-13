@@ -7,6 +7,7 @@ import math
 import numpy as np
 import pandas as pd
 
+from ..currency import money
 from ..page import Section
 from ..style import STRATEGY_COLOR, chart
 from ..tables import Table
@@ -49,12 +50,12 @@ def trading_activity(returns: pd.Series, transactions: pd.DataFrame, turnover: p
         "Avg. fills per trading day": f"{trading_days.mean():.1f}",
         "Most fills in a day": f"{trading_days.max():,}",
         "Avg. symbols per trading day": f"{per_day['symbol'].nunique().mean():.1f}",
-        "Buys": f"{int(buys.sum()):,} fills, ${value[buys].sum():,.0f}",
-        "Sells": f"{int((~buys).sum()):,} fills, ${value[~buys].sum():,.0f}",
-        "Traded value": f"${value.sum():,.0f}",
-        "Avg. fill value": f"${value.mean():,.0f}",
-        "Median fill value": f"${value.median():,.0f}",
-        "Largest fill": f"${value.max():,.0f}",
+        "Buys": f"{int(buys.sum()):,} fills, {money(value[buys].sum(), 0)}",
+        "Sells": f"{int((~buys).sum()):,} fills, {money(value[~buys].sum(), 0)}",
+        "Traded value": money(value.sum(), 0),
+        "Avg. fill value": money(value.mean(), 0),
+        "Median fill value": money(value.median(), 0),
+        "Largest fill": money(value.max(), 0),
         "Avg. shares per fill": f"{transactions['amount'].abs().mean():,.0f}",
         "Avg. daily turnover": f"{turnover.mean():.2%}",
         "Annual turnover": f"{turnover.mean() * 252:.0%}",

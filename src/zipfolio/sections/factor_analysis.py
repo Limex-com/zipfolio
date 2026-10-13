@@ -7,7 +7,15 @@ import traceback
 import numpy as np
 import pandas as pd
 
-from ..factors import FACTOR_DESCRIPTIONS, fama_french_daily, model_description
+from ..factors import (
+    FACTOR_DESCRIPTIONS,
+    MODELS,
+    fama_french_daily,
+    market_factors,
+    model_description,
+    risk_free_returns,
+    ruonia,
+)
 from ..page import Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
 from ..tables import Table
@@ -20,19 +28,67 @@ ROLLING_WINDOW = 126
 HAC_LAGS = 5
 
 
+def build_market_model_analysis(returns: pd.Series, benchmark: pd.Series | None,
+                                risk_free: str | pd.Series | None = "ruonia") -> Section:
+    """The factor analysis of a market without published factors: the strategy against its benchmark.
+
+    One factor, the benchmark over the risk-free rate -- IMOEX over RUONIA for
+    a Moscow book. ``risk_free`` is ``"ruonia"`` (read from the Bank of
+    Russia), a series of the rate in percent a year, or ``None`` for none. In a
+    market where the rate has moved between 4% and 21% a year, leaving it out
+    would hand the rate to alpha, so a rate that cannot be had is said so.
+    """
+    section = Section("Factor Analysis")
+    if benchmark is None:
+        section.side.append('<p class="explain">The market model measures the strategy against its '
+                            'benchmark, and this backtest has none.</p>')
+        return section
+    name = benchmark.name or "the benchmark"
+    rate, rate_name, rate_source = None, None, ""
+    if isinstance(risk_free, str):
+        if risk_free.lower() != "ruonia":
+            raise ValueError(f"unknown risk-free rate {risk_free!r}; 'ruonia' or a series")
+        try:
+            rate, rate_name, rate_source = ruonia(), "RUONIA", " from the Bank of Russia"
+        except Exception:
+            print(f"Warning: no RUONIA for the Zipfolio tearsheet:\n{traceback.format_exc()}")
+            section.side.append(
+                '<p class="explain">RUONIA could not be downloaded from the Bank of Russia, so this '
+                'backtest has no factor analysis: without the risk-free rate the alpha would carry '
+                'it.</p>')
+            return section
+    elif risk_free is not None:
+        rate, rate_name = risk_free, risk_free.name or "the risk-free rate"
+
+    rf = risk_free_returns(rate, returns.index) if rate is not None else None
+    factors = market_factors(benchmark.reindex(returns.index).fillna(0.0), rf)
+    over = f" over {rate_name}" if rate_name else ""
+    return build_factor_analysis(
+        returns, "market", factors,
+        description=f"Market model: {name}{over}",
+        source=f", with {rate_name} read{rate_source}" if rate_name and rate_source else "",
+        glossary={"Mkt-RF": f"{name}{over or ' (no risk-free rate)'}, the market this strategy trades in"},
+    )
+
+
 def build_factor_analysis(returns: pd.Series, model: str = "ff5_mom",
-                          factors: pd.DataFrame | None = None) -> Section | None:
+                          factors: pd.DataFrame | None = None, description: str | None = None,
+                          source: str | None = None, glossary: dict[str, str] | None = None) -> Section | None:
     """Regress the strategy's excess returns on a factor model and decompose them.
 
     ``factors`` -- decimal daily returns with an ``RF`` column -- is downloaded
-    from Kenneth French's library when not given. A section that cannot get
-    its data says so rather than disappearing, so a missing analysis is not
+    from Kenneth French's library when not given. ``description``, ``source``
+    and ``glossary`` (``{factor: what it is}``) name a model of the caller's
+    own; see :func:`build_market_model_analysis`. A section that cannot get its
+    data says so rather than disappearing, so a missing analysis is not
     mistaken for one that was never asked for.
     """
     import statsmodels.api as sm
 
     section = Section("Factor Analysis")
-    description = model_description(model)
+    description = description or (model_description(model) if model in MODELS else "factor model")
+    source = " from Kenneth French's data library" if source is None else source
+    glossary = {**FACTOR_DESCRIPTIONS, **(glossary or {})}
     if factors is None:
         try:
             factors = fama_french_daily(model)
@@ -91,12 +147,14 @@ def build_factor_analysis(returns: pd.Series, model: str = "ff5_mom",
     section.table(Table(pd.Series(attribution).to_frame("Annual Return"), None, "{:.2%}".format),
                   title="Return Attribution", first_header="Source")
 
-    glossary = "".join(f"<b>{name}</b> -- {FACTOR_DESCRIPTIONS.get(name, name)}. " for name in names)
+    explained = "".join(f"<b>{name}</b> -- {glossary.get(name, name)}. " for name in names)
+    value = ", a positive HML leans to value" if "HML" in names else ""
     section.side.append(
         '<p class="explain">The strategy\'s daily return over the risk-free rate, regressed on the '
-        f'{description} from Kenneth French\'s data library. {glossary}</p>'
+        f'{description[0].lower() + description[1:]}{source}. {explained}</p>'
         '<p class="explain">A <b>beta</b> is how much of a factor the strategy carries: 1.0 on '
-        'Mkt-RF moves with the market, a positive HML leans to value. <b>Alpha</b> is the return '
+        f'Mkt-RF moves with the market{value}. '
+        '<b>Alpha</b> is the return '
         'the factors do not explain; it is worth something only with a t-stat beyond about 2 '
         '(p &lt; 0.05). Standard errors are Newey-West, robust to the autocorrelation of daily '
         'returns. The attribution splits the average annual return into what each factor paid '
@@ -118,7 +176,7 @@ def build_factor_analysis(returns: pd.Series, model: str = "ff5_mom",
         ax.axvline(0, color="black", lw=1)
         ax.set_xlabel("Beta, with 95% interval (faded: not significant)")
 
-    section.chart(chart("Factor Exposures", exposures, height=max(2.6, 0.45 * len(names) + 1.0)))
+    section.chart(chart("Factor Exposures", exposures, height=max(1.8, 0.45 * len(names) + 1.0)))
 
     if len(data) > ROLLING_WINDOW + 20:
         from statsmodels.regression.rolling import RollingOLS

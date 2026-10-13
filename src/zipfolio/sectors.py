@@ -1,9 +1,20 @@
-"""GICS sectors for US tickers, from a table the user supplies."""
+"""Sectors for the sector analysis: GICS for US tickers, MOEX sector indices for Moscow.
+
+* **US** -- GICS, from a table the user supplies (:func:`us_sector_mappings`):
+  the classification is licensed by MSCI and S&P, so no codes ship here.
+* **Moscow** -- the Moscow Exchange's own sector indices, MOEXOG for oil and
+  gas, MOEXFN for financials and so on (:func:`moex_sector_mappings`). Their
+  constituents are public; they are read from the exchange's ISS service when
+  a report is built and cached for a week.
+"""
 
 from __future__ import annotations
 
 import csv
+import json
 import os
+import time
+import urllib.request
 from functools import lru_cache
 from pathlib import Path
 
@@ -94,3 +105,64 @@ def sectors_of(positions: pd.DataFrame, sector_mappings: dict[str, str] | None) 
     if not sector_mappings or not any(symbol in sector_mappings for symbol in held):
         return {}
     return {symbol: sector_mappings.get(symbol, UNCLASSIFIED) for symbol in held}
+
+
+#: The Moscow Exchange's sector indices and the sector each stands for.
+MOEX_SECTOR_INDICES = {
+    "MOEXOG": "Oil & Gas",
+    "MOEXEU": "Electric Utilities",
+    "MOEXTL": "Telecommunications",
+    "MOEXMM": "Metals & Mining",
+    "MOEXFN": "Financials",
+    "MOEXCN": "Consumer",
+    "MOEXCH": "Chemicals",
+    "MOEXTN": "Transportation",
+    "MOEXIT": "Information Technology",
+    "MOEXRE": "Real Estate",
+}
+MOEX_MICS = frozenset({"MISX"})
+MOEX_ISS_URL = "https://iss.moex.com/iss/statistics/engines/stock/markets/index/analytics/{index}.json"
+MOEX_SECTORS_MAX_AGE = 7 * 24 * 3600
+
+
+def moex_sector_mappings(ticker_mics, cache_dir: str | Path | None = None, timeout: float = 8.0) -> dict[str, str]:
+    """Return ``{ticker: sector}`` for the Moscow listings among ``ticker_mics``.
+
+    The sector is the Moscow Exchange sector index the ticker belongs to today:
+    membership is current, not as of the backtest, so a company that changed
+    sector, or left every sector index, is filed by where it is now -- or, if
+    nowhere, as unclassified. With the exchange unreachable and nothing cached,
+    the mapping is empty and the report has no sector section.
+    """
+    table = _moex_table(cache_dir, timeout)
+    mappings = {}
+    for ticker_mic in ticker_mics or []:
+        ticker, _, mic = str(ticker_mic).partition("@")
+        if mic in MOEX_MICS and ticker in table:
+            mappings[ticker] = table[ticker]
+    return mappings
+
+
+def _moex_table(cache_dir, timeout: float) -> dict[str, str]:
+    from .factors import _cache_dir, _store
+
+    path = _cache_dir(cache_dir) / "moex_sectors.json"
+    if path.exists() and time.time() - path.stat().st_mtime < MOEX_SECTORS_MAX_AGE:
+        return json.loads(path.read_text())
+    table: dict[str, str] = {}
+    try:
+        for index, sector in MOEX_SECTOR_INDICES.items():
+            url = MOEX_ISS_URL.format(index=index) + "?iss.meta=off&limit=100"
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                analytics = json.load(response)["analytics"]
+            column = analytics["columns"].index("ticker")
+            for row in analytics["data"]:
+                table.setdefault(str(row[column]), sector)
+    except Exception as error:
+        if path.exists():
+            print(f"Warning: could not refresh the MOEX sector indices ({error}); using the cached copy.")
+            return json.loads(path.read_text())
+        print(f"Warning: no MOEX sector indices ({error}); the report has no sector section.")
+        return {}
+    _store(path, json.dumps(table, ensure_ascii=False).encode("utf-8"))
+    return table

@@ -1,9 +1,13 @@
-"""Daily Fama-French factors, from Kenneth French's data library.
+"""Factor returns for the factor analysis: Fama-French for US books, a market model elsewhere.
 
-The library publishes each factor set as a zipped CSV of percentages, updated
-monthly from CRSP. This is what ``pandas_datareader.famafrench`` reads, without
-the dependency: one request per file, cached for a week -- the files change
-once a month, and a backtest service builds many reports a day.
+* **Fama-French** daily factors come from Kenneth French's data library, which
+  publishes each set as a zipped CSV of percentages, updated monthly from
+  CRSP. This is what ``pandas_datareader.famafrench`` reads, without the
+  dependency: one request per file, cached for a week.
+* **A market model** -- the strategy against its own benchmark over a
+  risk-free rate -- is what a market without published factors gets: Moscow
+  against IMOEX over RUONIA, for one. :func:`market_factors` builds it;
+  :func:`ruonia` reads the rate from the Bank of Russia.
 """
 
 from __future__ import annotations
@@ -13,7 +17,9 @@ import os
 import re
 import time
 import urllib.request
+import xml.etree.ElementTree as ElementTree
 import zipfile
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -44,6 +50,12 @@ FACTOR_DESCRIPTIONS = {
 
 CACHE_MAX_AGE = 7 * 24 * 3600
 
+#: The Bank of Russia's web service; RUONIA is its overnight rouble rate.
+CBR_SERVICE = "https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx"
+RUONIA_SINCE = date(2010, 1, 1)
+#: RUONIA is published every business day, so a day-old copy is fresh enough.
+RUONIA_MAX_AGE = 24 * 3600
+
 
 def fama_french_daily(model: str = "ff5_mom", cache_dir: str | Path | None = None,
                       timeout: float = 8.0) -> pd.DataFrame:
@@ -54,7 +66,7 @@ def fama_french_daily(model: str = "ff5_mom", cache_dir: str | Path | None = Non
     """
     if model not in MODELS:
         raise ValueError(f"unknown factor model {model!r}; one of {sorted(MODELS)}")
-    cache = Path(cache_dir or os.getenv("ZIPFOLIO_CACHE_DIR") or Path.home() / ".cache" / "zipfolio")
+    cache = _cache_dir(cache_dir)
     frames = [_parse(_fetch(name, cache, timeout)) for name in MODELS[model][1]]
     factors = pd.concat(frames, axis="columns", join="inner")
     return factors.loc[:, ~factors.columns.duplicated()] / 100.0
@@ -62,6 +74,88 @@ def fama_french_daily(model: str = "ff5_mom", cache_dir: str | Path | None = Non
 
 def model_description(model: str) -> str:
     return MODELS[model][0]
+
+
+def ruonia(cache_dir: str | Path | None = None, timeout: float = 8.0) -> pd.Series:
+    """RUONIA, the Bank of Russia's overnight rouble rate, in percent a year, by day (UTC).
+
+    Read from the Bank's ``DailyInfo`` web service since 2010 and cached for a
+    day under the same directory as the Fama-French files. Raises when it can
+    be neither downloaded nor found in the cache.
+    """
+    cache = _cache_dir(cache_dir)
+    path = cache / "ruonia.xml"
+    if path.exists() and time.time() - path.stat().st_mtime < RUONIA_MAX_AGE:
+        payload = path.read_bytes()
+    else:
+        envelope = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
+            '<Ruonia xmlns="http://web.cbr.ru/">'
+            f"<fromDate>{RUONIA_SINCE.isoformat()}</fromDate><ToDate>{date.today().isoformat()}</ToDate>"
+            "</Ruonia></soap:Body></soap:Envelope>"
+        ).encode("utf-8")
+        request = urllib.request.Request(CBR_SERVICE, data=envelope, headers={
+            "Content-Type": "text/xml; charset=utf-8", "SOAPAction": "http://web.cbr.ru/Ruonia"})
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = response.read()
+            _store(path, payload)
+        except Exception:
+            if not path.exists():
+                raise
+            print("Warning: could not refresh RUONIA; using the cached copy.")
+            payload = path.read_bytes()
+
+    rates = {}
+    for row in ElementTree.fromstring(payload).iter():
+        if row.tag.split("}")[-1] != "ro":
+            continue
+        fields = {child.tag.split("}")[-1]: child.text for child in row}
+        if fields.get("D0") and fields.get("ruo"):
+            rates[fields["D0"][:10]] = float(fields["ruo"])
+    if not rates:
+        raise ValueError("the Bank of Russia returned no RUONIA rates")
+    series = pd.Series(rates, name="RUONIA").sort_index()
+    series.index = pd.DatetimeIndex(pd.to_datetime(series.index)).tz_localize("UTC")
+    return series
+
+
+def risk_free_returns(rate: pd.Series, dates: pd.DatetimeIndex) -> pd.Series:
+    """Per-session returns of a rate in percent a year, accrued over the calendar days since the last session.
+
+    Each session earns the rate known the day before -- so no session uses a
+    rate published after it -- for the days between the two sessions, on an
+    actual/365 basis: a Monday earns Friday's rate for three days.
+    """
+    rate = rate.sort_index()
+    known = rate.reindex(rate.index.union(dates)).ffill().shift(1).reindex(dates)
+    known = known.fillna(rate.iloc[0])
+    days = pd.Series(dates, index=dates).diff().dt.days.fillna(1).clip(lower=1)
+    return (known / 100.0 * days / 365.0).rename("RF")
+
+
+def market_factors(benchmark: pd.Series, risk_free: pd.Series | None = None) -> pd.DataFrame:
+    """A one-factor model: the benchmark over the risk-free rate, plus ``RF``.
+
+    ``benchmark`` is daily returns; ``risk_free`` per-session returns (see
+    :func:`risk_free_returns`), zero when not given.
+    """
+    rf = (risk_free if risk_free is not None else pd.Series(0.0, index=benchmark.index)).reindex(
+        benchmark.index).fillna(0.0)
+    return pd.DataFrame({"Mkt-RF": benchmark - rf, "RF": rf})
+
+
+def _cache_dir(cache_dir: str | Path | None) -> Path:
+    return Path(cache_dir or os.getenv("ZIPFOLIO_CACHE_DIR") or Path.home() / ".cache" / "zipfolio")
+
+
+def _store(path: Path, payload: bytes) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    except OSError as error:
+        print(f"Warning: could not cache {path.name}: {error}")
 
 
 def _fetch(name: str, cache: Path, timeout: float) -> bytes:
@@ -77,11 +171,7 @@ def _fetch(name: str, cache: Path, timeout: float) -> bytes:
                   f"{time.strftime('%Y-%m-%d', time.gmtime(path.stat().st_mtime))}.")
             return path.read_bytes()
         raise
-    try:
-        cache.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(payload)
-    except OSError as error:
-        print(f"Warning: could not cache {name}: {error}")
+    _store(path, payload)
     return payload
 
 
