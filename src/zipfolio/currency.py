@@ -58,6 +58,16 @@ def money(value: float, decimals: int = 2) -> str:
     return f"{sign}{body} {current.symbol}" if current.symbol_after else f"{sign}{current.symbol}{body}"
 
 
+def compact(value: float) -> str:
+    """A short amount for the summary: ``$109.6k``, ``-2.7m ₽``, ``$950``."""
+    current = currency()
+    sign = "-" if value < 0 else ""
+    size = abs(value)
+    body = (f"{size / 1e9:,.1f}bn" if size >= 1e9 else f"{size / 1e6:,.1f}m" if size >= 1e6
+            else f"{size / 1e3:,.1f}k" if size >= 1e3 else f"{size:,.0f}")
+    return f"{sign}{body} {current.symbol}" if current.symbol_after else f"{sign}{current.symbol}{body}"
+
+
 def money_formatter(decimals: int = 2):
     """:func:`money` as a one-argument formatter, for a table column."""
     return lambda value: money(value, decimals)

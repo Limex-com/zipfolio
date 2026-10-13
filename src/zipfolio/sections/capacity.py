@@ -67,12 +67,13 @@ def build_capacity(returns, positions, transactions, market_data) -> Section:
     finally:
         capacity.daily_txns_with_bar_data = original
     if slow or heavy:
-        section.finding(WARN, f"At {millions(base)}, {slow:,} names would take over a day to sell",
-                        f"{heavy:,} names had a day's fills over 5% of that day's volume." if heavy else
-                        "No day's fills took over 5% of its volume.")
+        section.finding(WARN, f"Liquidity at {millions(base)}",
+                        f"{slow:,} names over a day to sell" if slow else f"{heavy:,} names over 5% of volume",
+                        f"At a {millions(base)} capital base, taking at most 20% of a day's volume, {slow:,} names "
+                        f"would take over a day to sell; {heavy:,} had a day's fills over 5% of its volume.")
     else:
-        section.finding(OK, f"At {millions(base)}, every position could be sold within a day",
-                        "Taking at most 20% of a day's volume.")
+        section.finding(OK, f"Liquidity at {millions(base)}", "all sellable within a day",
+                        f"At a {millions(base)} capital base, taking at most 20% of a day's volume.")
     return section
 
 

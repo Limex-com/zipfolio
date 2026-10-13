@@ -61,9 +61,9 @@ def build_tearsheet(
 ) -> list[str]:
     """Write the Zipfolio tearsheet for one backtest to ``output``.
 
-    The page opens with contents and a summary of what the sections found
-    (``Section.finding``), most pressing first, then the sections in four parts
-    (``page.GROUPS``), each charts on the left and tables on the right:
+    The page opens with a summary -- one card per part, each row a finding
+    (``Section.finding``: measure, value, status) -- then the sections in four
+    parts (``page.GROUPS``), each charts on the left and tables on the right:
 
     **Where the return came from**
 

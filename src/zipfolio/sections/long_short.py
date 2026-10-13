@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..currency import money, money_formatter, unit
+from ..currency import compact, money, money_formatter, unit
 from ..inputs import utc_dates
 from ..page import INFO, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
@@ -126,16 +126,14 @@ def build_long_short(returns, holdings, transactions, orders=None) -> Section | 
         section.chart(chart("PnL by Side and Year", by_year, height=3.0))
 
     long_pnl, short_pnl = float(legs["Long"].sum()), float(legs["Short"].sum())
-    detail = f"Long side {money(long_pnl, 0)}, short side {money(short_pnl, 0)}."
+    value = f"{compact(long_pnl)} / {compact(short_pnl)}"
     winner, loser = (long_pnl, short_pnl) if long_pnl >= short_pnl else (short_pnl, long_pnl)
     names = ("short", "long") if long_pnl >= short_pnl else ("long", "short")
-    if winner > 0 > loser and -loser >= GIVE_BACK * winner:
-        section.finding(WARN, f"The {names[0]} side gave back {-loser / winner:.0%} of what the {names[1]} side made",
-                        detail)
-    elif winner > 0 > loser:
-        section.finding(INFO, f"The {names[0]} side lost money", detail)
-    elif loser >= 0:
-        section.finding(INFO, "Both sides made money", detail)
+    if winner > 0 > loser:
+        note = (f"The {names[0]} side lost {money(-loser, 0)}, giving back {-loser / winner:.0%} of what the "
+                f"{names[1]} side made ({money(winner, 0)}).")
+        section.finding(WARN if -loser >= GIVE_BACK * winner else INFO, "Long / short PnL", value, note)
     else:
-        section.finding(INFO, "Both sides lost money", detail)
+        section.finding(INFO, "Long / short PnL", value,
+                        "Both sides made money." if loser >= 0 else "Both sides lost money.")
     return section

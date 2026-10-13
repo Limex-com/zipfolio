@@ -92,12 +92,10 @@ def build_profit_concentration(returns, positions, transactions) -> Section | No
         rest = ep.cum_returns_final(curves[f"Without the best {shown}"])
         detail = (f"Total return {base:.1%}; without its {shown} best days of {len(returns):,}, "
                   f"{rest:.1%}.")
-        if fewest == smallest:
-            section.finding(BAD, f"{smallest} sessions made all of the return", detail)
-        elif fewest:
-            section.finding(WARN, f"{fewest} sessions made all of the return", detail)
-        else:
-            section.finding(OK, "The return does not hang on a few days", detail)
+        status = BAD if fewest == smallest else WARN if fewest else OK
+        note = (f"{shown} sessions made all of the return. " if fewest else
+                "The return does not hang on a few days. ") + detail
+        section.finding(status, f"Total return without best {shown} days", f"{base:.1%} → {rest:.1%}", note)
 
     trades = None
     if positions is not None and transactions is not None:
@@ -166,10 +164,11 @@ def build_profit_concentration(returns, positions, transactions) -> Section | No
 
     if total > 0:
         share = top / total
-        section.finding(WARN if share >= 0.5 else INFO,
-                        f"The {BEST_TRADES} best round trips made {share:.0%} of the net PnL",
-                        f"{len(pnl):,} round trips in all; without those {BEST_TRADES}, {money(total - top)}.")
+        section.finding(WARN if share >= 0.5 else INFO, f"Best {BEST_TRADES} round trips' share of PnL",
+                        f"{share:.0%}",
+                        f"{len(pnl):,} round trips in all; without the best {BEST_TRADES}, {money(total - top)}.")
     status = BAD if loss >= BAD_LOSS else WARN if loss >= WARN_LOSS else OK
-    section.finding(status, f"Resampled round trips lose money {loss:.0%} of the time",
-                    f"5th to 95th percentile of the net PnL: {money(low, 0)} to {money(high, 0)}.")
+    section.finding(status, "Chance of a loss, bootstrap", f"{loss:.0%}",
+                    f"Resampling the round trips, the net PnL ends below zero {loss:.0%} of the time; 5th to 95th "
+                    f"percentile {money(low, 0)} to {money(high, 0)}.")
     return section

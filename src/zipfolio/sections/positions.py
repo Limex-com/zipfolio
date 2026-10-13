@@ -39,12 +39,13 @@ def build_positions(returns, positions) -> Section:
     largest = allocation.drop(columns="cash", errors="ignore").abs().max(axis="columns")
     held = largest[largest > 0]
     if len(held):
-        section.finding(INFO, f"The largest position is {held.median():.0%} of the portfolio on a typical day",
+        section.finding(INFO, "Largest position", f"{held.median():.0%} (max {held.max():.0%})",
+                        f"The largest position is {held.median():.0%} of the portfolio on a typical day, "
                         f"{held.max():.0%} at its largest.")
     leverage = positions.drop(columns="cash", errors="ignore").abs().sum(axis="columns") / positions.sum(axis="columns")
     if leverage.max() > LEVERAGE_NOTE:
         section.finding(WARN if leverage.max() > LEVERAGE_WARN else INFO,
-                        f"Gross leverage reached {leverage.max():.2f}x",
+                        "Max gross leverage", f"{leverage.max():.2f}x",
                         f"{leverage.median():.2f}x on a typical day. Borrowing and shorting costs are not "
                         "modeled.")
     return section

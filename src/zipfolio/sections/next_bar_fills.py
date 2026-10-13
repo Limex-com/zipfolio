@@ -167,16 +167,15 @@ def build_next_bar_fills(returns, holdings, transactions, fill_bars, settings) -
     base, after = ep.annual_return(returns), ep.annual_return(alternative)
     detail = (f"Annual return {base:.1%} with fills at the signal bar's {reference}, "
               f"{after:.1%} at the next bar's open.")
+    label, value = "Annual return, filled a bar later", f"{base:.1%} → {after:.1%}"
     if base > 0:
         lost = (base - after) / base
         if after <= 0:
-            section.finding(BAD, "Waiting one bar wipes out the return", detail)
-        elif lost >= BAD_SHARE:
-            section.finding(BAD, f"Waiting one bar costs {lost:.0%} of the return", detail)
-        elif lost >= WARN_SHARE:
-            section.finding(WARN, f"Waiting one bar costs {lost:.0%} of the return", detail)
+            section.finding(BAD, label, value, "Waiting one bar wipes out the return. " + detail)
         else:
-            section.finding(OK, "The return survives a bar's wait", detail)
+            status = BAD if lost >= BAD_SHARE else WARN if lost >= WARN_SHARE else OK
+            section.finding(status, label, value, f"Waiting one bar costs {max(lost, 0):.0%} of the return. "
+                            + detail)
     else:
-        section.finding(INFO, "Fills a bar later", detail)
+        section.finding(INFO, label, value, detail)
     return section

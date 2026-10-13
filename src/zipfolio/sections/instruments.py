@@ -59,13 +59,15 @@ def _concentration_finding(section: Section, summary: pd.DataFrame) -> None:
     if total > 0:
         top = traded["Net PnL"].nlargest(2)
         share = float(top.sum()) / total
-        section.finding(WARN if share >= 0.75 else INFO,
-                        f"{top.index[0]} and {top.index[1]} made {share:.0%} of the net PnL",
-                        f"{len(traded):,} instruments held in all.")
+        section.finding(WARN if share >= 0.75 else INFO, "Top 2 names' share of PnL",
+                        f"{share:.0%} ({top.index[0]}, {top.index[1]})",
+                        f"{top.index[0]} and {top.index[1]} made {share:.0%} of the net PnL; "
+                        f"{len(traded):,} instruments held in all. Over 100% means the rest lost money.")
     else:
         worst = traded["Net PnL"].nsmallest(2)
-        section.finding(INFO, f"A net loss of {money(-total, 0)}; {worst.index[0]} and {worst.index[1]} lost the most",
-                        f"{len(traded):,} instruments held in all.")
+        section.finding(INFO, "Biggest losers", f"{worst.index[0]}, {worst.index[1]}",
+                        f"A net loss of {money(-total, 0)}; {worst.index[0]} and {worst.index[1]} lost the most "
+                        f"of {len(traded):,} instruments held.")
 
 
 def build_instruments(returns, holdings, positions, transactions, orders=None) -> Section:

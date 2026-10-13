@@ -60,9 +60,10 @@ def build_round_trips(returns, positions, transactions) -> Section | None:
     wins, losses = pnl[pnl > 0].sum(), -pnl[pnl < 0].sum()
     factor = wins / losses if losses else float("inf")
     shown = f"{factor:.2f}" if losses else "no losing trades"
-    section.finding(WARN if factor < 1 else INFO,
-                    f"{len(pnl):,} round trips, {(pnl > 0).mean():.0%} profitable, profit factor {shown}",
-                    f"Median holding time {trades['duration'].median().days} days.")
+    section.finding(WARN if factor < 1 else INFO, "Win rate · profit factor",
+                    f"{(pnl > 0).mean():.0%} · {shown}",
+                    f"{len(pnl):,} round trips; median holding time {trades['duration'].median().days} days. "
+                    "The profit factor is the winners' PnL over the losers'.")
     return section
 
 

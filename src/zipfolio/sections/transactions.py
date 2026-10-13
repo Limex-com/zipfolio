@@ -31,7 +31,7 @@ def build_transactions(returns, positions, transactions, market_timezone: str) -
         transactions, market_timezone, ax), y="pct"))
     annual = float(turnover.mean() * 252)
     if np.isfinite(annual) and annual > 0:
-        section.finding(INFO, f"Turns the book over {annual:.1f} times a year",
+        section.finding(INFO, "Turnover", f"{annual:.1f}× a year",
                         f"Trades on {transactions.index.normalize().nunique():,} of {len(returns):,} sessions.")
     return section
 

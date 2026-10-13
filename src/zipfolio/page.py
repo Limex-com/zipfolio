@@ -28,7 +28,6 @@ OK, WARN, BAD, INFO = "ok", "warn", "bad", "info"
 MARKS = {OK: "&#10003;", WARN: "!", BAD: "&#10007;", INFO: "i"}
 #: The summary lists what needs attention first.
 SEVERITY = {BAD: 0, WARN: 1, INFO: 2, OK: 3}
-SUMMARY_BLOCKS = [("Needs a Look", {BAD, WARN}), ("Worth Knowing", {INFO}), ("Holds Up", {OK})]
 
 #: The page's four parts, each the question a reader brings to it, and the
 #: sections that answer it, in page order. A section missing here goes last.
@@ -44,11 +43,16 @@ GROUPS: list[tuple[str, list[str]]] = [
 
 @dataclass
 class Finding:
-    """One line of the summary: what a section found, in a sentence, and how much it matters."""
+    """One row of the summary: a measure, its value, and how much it matters.
+
+    ``label`` and ``value`` are what the row shows -- "Without best 5 days",
+    "30.9% → 5.2%"; ``note`` is the sentence behind it, shown on hover.
+    """
 
     status: str
-    headline: str
-    detail: str = ""
+    label: str
+    value: str
+    note: str = ""
     section: str = ""
 
 
@@ -75,8 +79,8 @@ class Section:
     def anchor(self) -> str:
         return anchor(self.title)
 
-    def finding(self, status: str, headline: str, detail: str = "") -> None:
-        self.findings.append(Finding(status, headline, detail, self.title))
+    def finding(self, status: str, label: str, value: str, note: str = "") -> None:
+        self.findings.append(Finding(status, label, value, note, self.title))
 
     def chart(self, svg: str | None) -> None:
         if svg:
@@ -112,17 +116,6 @@ def _numeral(number: int) -> str:
     return ["I", "II", "III", "IV", "V", "VI"][number] if number < 6 else str(number + 1)
 
 
-def _contents_html(groups) -> str:
-    columns = []
-    for number, (name, members) in enumerate(groups):
-        links = "".join(f'<li><a href="#{section.anchor}">{html.escape(section.title)}</a></li>'
-                        for section in members)
-        heading = (f'<a href="#part-{number + 1}"><span class="num">{_numeral(number)}</span> '
-                   f'{html.escape(name or "More")}</a>')
-        columns.append(f'<div class="toc-group"><h3>{heading}</h3><ul>{links}</ul></div>')
-    return f'<nav class="toc" id="contents">{"".join(columns)}</nav>'
-
-
 def _jump_bar_html(groups, has_summary: bool) -> str:
     links = ['<a href="#summary">Summary</a>'] if has_summary else []
     links += [f'<a href="#part-{number + 1}"><span class="num">{_numeral(number)}</span> '
@@ -130,29 +123,46 @@ def _jump_bar_html(groups, has_summary: bool) -> str:
     return f'<nav class="jump">{"".join(links)}</nav>'
 
 
-def summary_html(sections: list[Section]) -> str:
-    """What the report found, most pressing first, each line linked to the section that found it."""
-    findings = [finding for section in sections if not section.failed for finding in section.findings]
-    if not findings:
+#: How a card names its worst finding, and what the dots mean.
+VERDICTS = {BAD: "needs work", WARN: "needs a look", INFO: "for context", OK: "holds up"}
+LEGEND = {OK: "holds up", INFO: "for context", WARN: "needs a look", BAD: "wrong or misleading"}
+
+
+def summary_html(groups) -> str:
+    """One card per part of the page: its findings as measure, value and a coloured dot.
+
+    The card's colour is its worst finding, so a glance at the four says where
+    the problems are; each row links to its section, and its full sentence
+    is on hover. The cards double as the contents: each lists its sections.
+    """
+    order = {title: rank for rank, title in enumerate(title for _, titles in GROUPS for title in titles)}
+    cards = []
+    for number, (name, members) in enumerate(groups):
+        findings = [finding for section in members if not section.failed for finding in section.findings]
+        findings.sort(key=lambda f: (order.get(f.section, 99), SEVERITY.get(f.status, 9)))
+        worst = min((f.status for f in findings), key=lambda status: SEVERITY[status], default=INFO)
+        flagged = sum(f.status in (BAD, WARN) for f in findings)
+        verdict = f"{flagged} to check" if flagged else VERDICTS[worst]
+        rows = "".join(
+            f'<tr title="{html.escape(f.note)}"><td class="d"><span class="dot {f.status}"></span></td>'
+            f'<td><a href="#{anchor(f.section)}">{html.escape(f.label)}</a></td>'
+            f'<td class="v">{html.escape(f.value)}</td></tr>'
+            for f in findings)
+        table = f'<table class="score">{rows}</table>' if rows else ""
+        links = " &middot; ".join(f'<a href="#{section.anchor}">{html.escape(section.title)}</a>'
+                                  for section in members)
+        cards.append(
+            f'<div class="card {worst}"><a class="card-head" href="#part-{number + 1}">'
+            f'<span class="num">{_numeral(number)}</span><span class="card-name">{html.escape(name or "More")}</span>'
+            f'<span class="verdict {BAD if worst == BAD else WARN if flagged else worst}">{verdict}</span></a>'
+            f'{table}<div class="card-foot">{links}</div></div>')
+    if not any("<table" in card for card in cards):
         return ""
-    order = {title: rank for rank, title in enumerate(
-        title for _, titles in GROUPS for title in titles)}
-    findings.sort(key=lambda f: (SEVERITY.get(f.status, 9), order.get(f.section, 99)))
-    blocks = []
-    for heading, statuses in SUMMARY_BLOCKS:
-        rows = []
-        for finding in (f for f in findings if f.status in statuses):
-            detail = f' {html.escape(finding.detail)}' if finding.detail else ""
-            link = (f' <a class="see" href="#{anchor(finding.section)}">{html.escape(finding.section)} &rarr;</a>'
-                    if finding.section else "")
-            rows.append(f'<div class="check"><span class="mark {finding.status}">{MARKS[finding.status]}</span>'
-                        f'<div><b>{html.escape(finding.headline)}</b>{detail}{link}</div></div>')
-        if rows:
-            blocks.append(f'<h3>{heading}</h3>{"".join(rows)}')
+    legend = "".join(f'<span><span class="dot {status}"></span>{text}</span>' for status, text in LEGEND.items())
     return ('<section id="summary" class="summary"><h2>Summary</h2>'
-            '<p class="caption lead">What this report found, what needs a look first. Each line links to the '
-            'section with the numbers behind it.</p>'
-            f'<div class="findings">{"".join(blocks)}</div></section>')
+            f'<div class="cards">{"".join(cards)}</div>'
+            f'<p class="legend">{legend}<span>Hover a row for the reasoning; click it for the numbers.</span></p>'
+            '</section>')
 
 
 def _section_html(section: Section) -> str:
@@ -176,15 +186,14 @@ def page_html(title: str, returns: pd.Series, benchmark, analytics: str, section
     benchmark_name = html.escape(str(benchmark.name)) if benchmark is not None and benchmark.name else (
         "Benchmark" if benchmark is not None else "none")
     groups = ordered(sections)
-    summary = summary_html(sections)
+    summary = summary_html(groups)
     parts = []
     for number, (name, members) in enumerate(groups):
         parts.append(f'<div class="part" id="part-{number + 1}"><span class="num">{_numeral(number)}</span>'
                      f'<span class="part-name">{html.escape(name or "More")}</span>'
-                     '<a class="top" href="#contents">Contents &uarr;</a></div>')
+                     '<a class="top" href="#summary">Summary &uarr;</a></div>')
         parts.append("\n<hr>\n".join(_section_html(section) for section in members))
     body = "\n".join(parts)
-    contents = _contents_html(groups)
     jump = _jump_bar_html(groups, bool(summary))
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -246,16 +255,37 @@ def page_html(title: str, returns: pd.Series, benchmark, analytics: str, section
   .jump::-webkit-scrollbar {{ display: none; }}
   .jump a {{ color: #333; font-weight: 700; font-size: 12px; }}
   .num {{ display: inline-block; min-width: 18px; color: #6B9E00; font-weight: 700; }}
-  .toc {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin: 18px 0 8px; }}
-  .toc h3 {{ font-size: 13px; margin-bottom: 6px; }}
-  .toc h3 a {{ color: #000; }}
-  .toc ul {{ list-style: none; margin: 0; padding: 0 0 0 22px; }}
-  .toc li {{ margin: 0 0 3px; }}
-  .summary .findings {{ max-width: 760px; }}
-  .summary .check {{ margin-bottom: 10px; }}
-  .summary h3 {{ margin: 18px 0 10px; }}
-  .lead {{ margin: -8px 0 18px; }}
-  .see {{ white-space: nowrap; font-size: 12px; margin-left: 4px; }}
+  .summary {{ margin-top: 22px; }}
+  .cards {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
+  .card {{ border: 1px solid #e3e3e3; border-top: 4px solid #8A8A8A; border-radius: 6px;
+          padding: 12px 14px 10px; min-width: 0; }}
+  .card.ok {{ border-top-color: #6B9E00; }}
+  .card.warn {{ border-top-color: #D9A400; }}
+  .card.bad {{ border-top-color: #BA516B; }}
+  .card-head {{ display: flex; align-items: baseline; gap: 6px; color: #000; font-weight: 700;
+               font-size: 14px; margin: 0 0 8px; }}
+  .card-head:hover {{ color: #000; text-decoration: none; }}
+  .card-name {{ flex: 1 1 auto; }}
+  .verdict {{ font-size: 11px; padding: 2px 8px; border-radius: 10px; color: #fff; white-space: nowrap;
+             background: #8A8A8A; }}
+  .verdict.ok {{ background: #6B9E00; }}
+  .verdict.warn {{ background: #D9A400; }}
+  .verdict.bad {{ background: #BA516B; }}
+  table.score {{ margin: 0 0 8px; }}
+  table.score td {{ padding: 5px 4px; border-bottom: 1px solid #f0f0f0; text-align: left; vertical-align: top; }}
+  table.score td.d {{ width: 12px; padding-right: 2px; }}
+  table.score td.v {{ text-align: right; font-weight: 700; }}
+  table.score a {{ color: #222; }}
+  table.score tr:hover td {{ background: #fafafa; }}
+  .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #8A8A8A;
+         margin: 4px 6px 0 0; }}
+  .dot.ok {{ background: #6B9E00; }}
+  .dot.warn {{ background: #D9A400; }}
+  .dot.bad {{ background: #BA516B; }}
+  .card-foot {{ font-size: 11px; color: grey; line-height: 1.6; }}
+  .card-foot a {{ color: #888; }}
+  .legend {{ color: grey; font-size: 12px; margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }}
+  .legend .dot {{ margin-top: 0; vertical-align: -1px; }}
   .part {{ display: flex; align-items: baseline; gap: 8px; margin: 46px 0 22px; padding: 0 0 8px;
           border-bottom: 3px solid #2d2d2d; scroll-margin-top: 48px; }}
   .part .num {{ font-size: 22px; min-width: 30px; }}
@@ -266,10 +296,9 @@ def page_html(title: str, returns: pd.Series, benchmark, analytics: str, section
     body {{ margin: 16px; }}
     .row {{ flex-direction: column; }}
     .left, .right {{ flex: 1 1 auto; width: 100%; }}
-    .toc {{ grid-template-columns: 1fr 1fr; }}
+    .cards {{ grid-template-columns: 1fr; }}
   }}
   @media (max-width: 560px) {{
-    .toc {{ grid-template-columns: 1fr; }}
     .part .num, .part-name {{ font-size: 18px; }}
   }}
   @media print {{
@@ -285,8 +314,6 @@ def page_html(title: str, returns: pd.Series, benchmark, analytics: str, section
 <h1>{html.escape(title)} <dt>{period}</dt></h1>
 <h4>Benchmark: {benchmark_name} &bull; Sessions: {len(returns):,} &bull; Generated by <a href="{REPOSITORY_URL}" target="_blank" rel="noopener" title="{REPOSITORY_URL}"><strong>ZipLime Zipfolio v{__version__}</strong></a> on {generated}</h4>
 {jump}
-{contents}
-<hr>
 {summary}
 {body}
 <hr>

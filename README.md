@@ -71,10 +71,12 @@ name the Zipfolio version that built the page and link back to this repository.
 The default title is "Zipfolio Tearsheet: Portfolio, Execution & Cost Analysis"
 (`title=` changes it).
 
-The page opens with contents and a **summary**: each section states what it
-found in a sentence -- marked as needing a look, worth knowing, or holding up --
-and the summary lists them, most pressing first, each linked to the numbers.
-The sections follow in four parts, each the question a reader brings:
+The page opens with a **summary**: one card per part of the report, each
+finding a row of measure, value and a coloured dot -- holds up, for context,
+needs a look, wrong or misleading -- and the card coloured by its worst row, so
+four cards say where the problems are. A row links to its section and gives
+the reasoning on hover; each card lists its sections, so the cards are also the
+contents. The sections follow in four parts, each the question a reader brings:
 
 **I. Where the return came from**
 

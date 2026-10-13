@@ -88,9 +88,9 @@ def build_drawdowns(returns, holdings, transactions, orders=None, sectors=None) 
     worst = worst[worst.abs() > 1e-9].sort_values()  # names not held then contributed nothing
     first = drawdowns.iloc[0]
     if len(worst) and worst.iloc[0] < 0:
-        section.finding(INFO, f"Worst drawdown {-abs(first['Depth']):.1%}, {first['Peak']:%b %Y} to "
-                              f"{first['Valley']:%b %Y}",
-                        f"{worst.index[0]} cost {abs(worst.iloc[0]) * 100:.1f} points of it.")
+        section.finding(INFO, "Worst drawdown", f"{-abs(first['Depth']):.1%}, {first['Peak']:%b %Y}",
+                        f"From {first['Peak']:%b %Y} to {first['Valley']:%b %Y}; {worst.index[0]} cost "
+                        f"{abs(worst.iloc[0]) * 100:.1f} points of it.")
     section.table(Table(worst.head(10).to_frame("Points of the Drawdown"), None, "{:.2%}".format),
                   title=f"Drawdown #1, by Name ({drawdowns.iloc[0]['Depth']:.1%})", first_header="Symbol")
 

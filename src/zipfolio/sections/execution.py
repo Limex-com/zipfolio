@@ -23,6 +23,9 @@ from ..tables import Table
 #: in a real market; the fixed-basis-point model charges the same however large.
 IMPACT_PARTICIPATION = 0.01
 
+#: The timing check is in the summary whatever it finds; the rest only when they flag something.
+TIMING = "Fill timing"
+
 ORDER_TYPE_NAMES = {"market": "Market", "limit": "Limit", "stop": "Stop", "stop_limit": "Stop-limit"}
 
 _MARKS = MARKS
@@ -125,12 +128,13 @@ def build_execution(transactions: pd.DataFrame, orders: pd.DataFrame | None,
                        f"{empty:,} orders asked for no shares -- a rebalance to a weight already held. "
                        "They are left out of every count here."))
     section.side.append("<h3>Realism Checks</h3>" + _checks_html(checks))
-    for status, title, detail, *headline in checks:
-        if status in (BAD, WARN):
-            section.finding(status, headline[0] if headline else title, _first_sentence(detail))
-    if not any(check[0] in (BAD, WARN) for check in checks):
-        section.finding(OK, "Fills pass the realism checks",
-                        "None of the checks below flagged a fill or an order.")
+    for status, title, detail, *summary in checks:
+        if summary and (status in (BAD, WARN) or summary[0] == TIMING):
+            label, value = summary
+            section.finding(status, label, value, detail)
+    if not any(check[0] in (BAD, WARN) for check in checks if check[3:4] != (TIMING,)):
+        section.finding(OK, "Fill realism checks", "all passed",
+                        "Every fill priced inside its bar, at a size the bar could take; every order filled.")
 
     types = book.groupby("type")["state"].value_counts().unstack(fill_value=0)
     for state in ("filled", "partial", "unfilled"):
@@ -210,18 +214,22 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
         checks.append((WARN, "Fills at the close of the signal bar",
                        "Each order fills at the close of the bar whose data produced it, so the strategy "
                        "trades at a price it has only just seen. That holds only for market-on-close "
-                       "orders sent before the close; next-bar execution is the conservative setting."))
+                       "orders sent before the close; next-bar execution is the conservative setting.",
+                       "Fill timing", "signal bar's close"))
     elif same_bar:
         checks.append((BAD, f"Fills at the {reference} of the signal bar",
                        f"An order placed on a bar's data fills at that bar's {reference}, which came "
-                       "before the data the order was based on: look-ahead. Use next-bar execution."))
+                       "before the data the order was based on: look-ahead. Use next-bar execution.",
+                       "Fill timing", f"signal bar's {reference}: look-ahead"))
     else:
         checks.append((OK, "Fills on the bar after the signal",
-                       f"Orders fill on the next bar, at its {reference}: no price is used before it existed."))
+                       f"Orders fill on the next bar, at its {reference}: no price is used before it existed.",
+                       "Fill timing", f"next bar's {reference}"))
     if reference in ("high", "low"):
         checks.append((BAD, f"Fill price is the bar's {reference}",
                        f"Every fill takes the bar's {reference} -- the best price of the bar for one side "
-                       "and the worst for the other. No order can choose that price."))
+                       "and the worst for the other. No order can choose that price.",
+                       "Fill price", f"the bar's {reference}"))
 
     if "above_high" in fills:
         outside = int((fills["above_high"] | fills["below_low"]).sum())
@@ -234,7 +242,7 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
             detail += ("Typically slippage pushing a buy past a bar that closed at its high: the "
                        "market never traded at that price, so neither could the strategy.")
         checks.append((OK if not outside else WARN if share < 0.05 else BAD, "Fill prices inside the bar", detail,
-                       f"{outside:,} fills priced outside their bar's high-low range"))
+                       "Fills outside the bar's range", f"{outside:,} of {len(fills):,}"))
 
     if "participation" in fills and fills["participation"].notna().any():
         participation = fills["participation"].dropna()
@@ -250,8 +258,8 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
         detail += ("Above about 1% a real order moves the price; the model charges the same fixed "
                    "basis points whatever the size." if heavy else "Small enough not to move the price.")
         checks.append((status, "Size against liquidity", detail,
-                       f"{zero:,} fills on bars with no volume" if zero else
-                       f"{heavy:,} fills took over {IMPACT_PARTICIPATION:.0%} of their bar's volume"))
+                       "Fills on bars with no volume" if zero else "Largest share of a bar's volume",
+                       f"{zero:,}" if zero else f"{worst:.1%}"))
 
     incomplete = book[book["state"] != "filled"]
     if len(incomplete):
@@ -259,7 +267,8 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
         checks.append((WARN, "Orders not filled in full",
                        f"{len(incomplete):,} of {len(book):,} orders did not fill in full ({partial:,} "
                        "partly) -- cancelled, rejected, or still open at the end. The strategy's intended "
-                       "positions and its actual ones differ by these."))
+                       "positions and its actual ones differ by these.",
+                       "Orders not filled in full", f"{len(incomplete):,} of {len(book):,}"))
     else:
         checks.append((OK, "Every order filled in full", f"All {len(book):,} orders filled completely."))
 
@@ -280,13 +289,9 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
                         | ((priced["side"] < 0) & (priced["price"] < priced["limit"] * (1 - 1e-9)))]
         checks.append((OK if breach.empty else BAD, "Limit prices respected",
                        "No limit order filled at a worse price than its limit." if breach.empty else
-                       f"{len(breach):,} limit-order fills priced through their limit."))
+                       f"{len(breach):,} limit-order fills priced through their limit.",
+                       "Fills through their limit", f"{len(breach):,}"))
     return checks
-
-
-def _first_sentence(text: str) -> str:
-    head, dot, _ = text.partition(". ")
-    return head + "." if dot else text
 
 
 def _checks_html(checks) -> str:

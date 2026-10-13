@@ -1032,21 +1032,26 @@ def test_the_page_is_four_parts_with_contents_and_a_summary(pyfolio, tmp_path):
     links = set(re.findall(r'href="#([^"]+)"', page))
     assert links <= ids, f"every link lands somewhere: {links - ids}"
     summary = page.split('id="summary"')[1].split("</section>")[0]
-    assert summary.count('class="check"') >= 5, "the sections say what they found"
+    cards = re.findall(r'<div class="card (\w+)">', summary)
+    assert len(cards) == 4, "one card per part"
+    assert summary.count("<tr ") >= 6, "the sections say what they found"
     assert 'href="#trading-costs"' in summary and 'href="#round-trips"' in summary
-    marks = re.findall(r'class="mark (\w+)"', summary)
-    order = {"bad": 0, "warn": 1, "info": 2, "ok": 3}
-    assert [order[m] for m in marks] == sorted(order[m] for m in marks), "most pressing first"
+    severity = {"bad": 0, "warn": 1, "info": 2, "ok": 3}
+    for card in summary.split('<div class="card ')[1:]:
+        dots = re.findall(r'class="dot (\w+)"', card.split('<div class="card-foot">')[0])
+        if dots:
+            assert card.startswith(min(dots, key=severity.get)), "a card is the colour of its worst finding"
+    assert "id=\"contents\"" not in page, "the cards are the contents"
 
 
 def test_a_failed_section_says_nothing_in_the_summary(pyfolio):
-    from zipfolio.page import BAD, Section, summary_html
+    from zipfolio.page import BAD, Section, ordered, summary_html
 
     broken = Section("Execution", failed=True)
-    broken.finding(BAD, "should not show")
+    broken.finding(BAD, "should not show", "-")
     fine = Section("Trading Costs")
-    fine.finding(BAD, "Costs ate it")
-    html = summary_html([broken, fine])
+    fine.finding(BAD, "Costs ate it", "90%")
+    html = summary_html(ordered([broken, fine]))
     assert "Costs ate it" in html and "should not show" not in html
 
 
@@ -1101,7 +1106,7 @@ def test_a_bar_that_wipes_out_the_return_is_flagged(pyfolio):
     section = build_next_bar_fills(returns, holdings, fills, bars, {"same_bar_execution": True})
 
     assert section is not None and section.findings[0].status == BAD
-    assert "wipes out" in section.findings[0].headline
+    assert "wipes out" in section.findings[0].note
     assert "The Same Trades, a Bar Later" in "".join(section.side + section.wide)
 
 
@@ -1166,7 +1171,9 @@ def test_a_return_made_in_five_days_is_flagged(pyfolio):
     returns.iloc[[20, 60, 100, 140, 180]] = 0.05
     section = build_profit_concentration(returns, None, None)
 
-    assert section.findings[0].status == BAD and section.findings[0].headline == "5 sessions made all of the return"
+    assert section.findings[0].status == BAD
+    assert section.findings[0].label == "Total return without best 5 days"
+    assert section.findings[0].note.startswith("5 sessions made all of the return")
 
 
 # ----------------------------------------------------------------------------
