@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..page import Section
+from ..page import OK, WARN, Section
 from ..style import chart
 from ..tables import captured_tables
 
@@ -29,4 +29,16 @@ def build_performance(returns, benchmark, positions, transactions) -> Section:
 
     section.chart(chart("Underwater Plot", lambda ax: plotting.plot_drawdown_underwater(
         returns=returns, ax=ax)))
+
+    import empyrical as ep
+
+    annual = ep.annual_return(returns)
+    if benchmark is not None:
+        name = benchmark.name or "the benchmark"
+        market = ep.annual_return(benchmark)
+        section.finding(OK if annual >= market else WARN, f"Annual return vs {name}", f"{annual:.1%} vs {market:.1%}",
+                        f"Compounded a year, over the same sessions. Below {name}'s, holding {name} would have "
+                        "done better.")
+    else:
+        section.finding(OK if annual > 0 else WARN, "Annual return", f"{annual:.1%}", "Compounded a year.")
     return section
