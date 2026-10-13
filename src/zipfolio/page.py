@@ -45,14 +45,14 @@ GROUPS: list[tuple[str, list[str]]] = [
 #: Each is ``(key, label shown when the check could not be made)``; the sections fill the slots.
 SCORECARD: list[tuple[str, list[tuple[str, str]]]] = [
     ("Where the Return Came From", [
-        ("return", "Annual return"), ("best_days", "Total return without the best 5 days"),
-        ("luck", "Luck test: chance of a loss"), ("top_names", "Profit from the top 2 names")]),
+        ("return", "Annual return"), ("alpha", "Alpha"),
+        ("best_days", "Total return without the best 5 days"), ("luck", "Luck test: chance of a loss")]),
     ("What It Risked", [
-        ("max_dd", "Max drawdown"), ("underwater", "Longest time below a peak"),
-        ("bad_days", "Bad days: average of the worst 5%"), ("one_name", "Worst drawdown from one name")]),
+        ("max_dd", "Max drawdown"), ("capture", "Up / down capture"),
+        ("risk_conc", "Risk from the top name, typical day"), ("sector", "Largest sector, typical day")]),
     ("How It Holds and Trades", [
-        ("largest", "Largest position, typical day"), ("leverage", "Max gross leverage"),
-        ("win_pf", "Winning trades · profit factor"), ("open_end", "Profit still open at the end")]),
+        ("largest", "Largest position, typical day"), ("top_names", "Profit from the top 2 names"),
+        ("best_trades", "Profit from the best 5 trades"), ("win_pf", "Winning trades · profit factor")]),
     ("Can It Be Traded", [
         ("timing", "Fill timing"), ("realism", "Fill realism"),
         ("costs", "Costs' share of gross profit"), ("liquidity", "Liquidity")]),

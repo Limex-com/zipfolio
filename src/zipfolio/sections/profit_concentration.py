@@ -170,7 +170,11 @@ def build_profit_concentration(returns, positions, transactions) -> Section | No
         share = top / total
         section.finding(WARN if share >= 0.5 else OK, f"Profit from the best {BEST_TRADES} trades", f"{share:.0%}",
                         f"{len(pnl):,} closed trades in all; without the best {BEST_TRADES}, {money(total - top)}. "
-                        "Over 100% means the rest lost money together.")
+                        "Half or more from five trades needs a look; over 100% means the rest lost money together.",
+                        key="best_trades")
+    else:
+        section.finding(WARN, f"Profit from the best {BEST_TRADES} trades", "no net profit",
+                        f"The {len(pnl):,} closed trades lost {money(-total, 0)} together.", key="best_trades")
     status = BAD if loss >= BAD_LOSS else WARN if loss >= WARN_LOSS else OK
     section.finding(status, "Luck test: chance of a loss", f"{loss:.0%}", key="luck", note=
                     f"Redrawing the same trades at random, the total is a loss {loss:.0%} of the time; a bad "

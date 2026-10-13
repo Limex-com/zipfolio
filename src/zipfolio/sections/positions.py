@@ -48,7 +48,8 @@ def build_positions(returns, positions) -> Section:
                         "the result.", key="largest")
     leverage = positions.drop(columns="cash", errors="ignore").abs().sum(axis="columns") / positions.sum(axis="columns")
     peak = float(leverage.max())
-    section.finding(BAD if peak > LEVERAGE_WARN else WARN if peak > LEVERAGE_NOTE else OK, "Max gross leverage",
-                    f"{peak:.2f}x", f"{leverage.median():.2f}x on a typical day. Above 1x the strategy borrows or "
-                    "shorts, and neither borrowing nor shorting costs are modeled.", key="leverage")
+    if peak > LEVERAGE_NOTE:
+        section.finding(BAD if peak > LEVERAGE_WARN else WARN, "Max gross leverage", f"{peak:.2f}x",
+                        f"{leverage.median():.2f}x on a typical day. Above 1x the strategy borrows or shorts, and "
+                        "neither borrowing nor shorting costs are modeled.")
     return section

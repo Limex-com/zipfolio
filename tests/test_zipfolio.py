@@ -1313,4 +1313,25 @@ def test_risk_and_book_parts_carry_several_checks(pyfolio, tmp_path):
     parts = re.split(r'<tr class="grp">', summary)[1:]
     by_part = {re.search(r'&middot; ([^<]+)</a>', part).group(1): part.count('class="badge') for part in parts}
     assert set(by_part.values()) == {4}, by_part
-    assert "badge na" not in summary.split("What It Risked")[1].split("How It Holds")[0], "risk is always checkable"
+    risk = summary.split("What It Risked")[1].split("How It Holds")[0]
+    assert risk.count("badge na") == 1 and "Largest sector" in risk.split("badge na")[0].rsplit("<tr", 1)[1], (
+        "without a sector table only the sector check is N/A")
+
+
+def test_sector_and_risk_concentration_are_on_the_card(pyfolio, tmp_path):
+    from zipfolio.sections.sector_analysis import sector_concentration
+
+    days = pd.date_range("2024-03-01", periods=2, tz="UTC")
+    positions = pd.DataFrame({"A": [60.0, 50.0], "B": [-20.0, 30.0], "C": [20.0, 20.0], "cash": 0.0}, index=days)
+    shares = sector_concentration(positions, {"A": "Tech", "B": "Tech", "C": "Energy"})
+    assert shares.loc[days[0], "Tech"] == pytest.approx(0.8), "a short counts toward its sector's weight"
+
+    closes = session_closes("2022-01-03", "2023-12-29")
+    returns, records, cash, fills = a_traded_book(closes)
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, returns, None, records, cash, fills,
+                    market_data=daily_bars_for(closes, ["AAPL@XNAS", "MSFT@XNAS"]),
+                    sector_mappings={"AAPL@XNAS": "Information Technology", "MSFT@XNAS": "Information Technology"})
+    summary = output.read_text(encoding="utf-8").split('id="summary"')[1].split("</table>")[0]
+    assert "Largest sector, typical day" in summary and "Information Technology" in summary
+    assert "Risk from the top name" in summary or "Effective number of names" in summary

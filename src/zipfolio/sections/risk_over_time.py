@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..page import Section
+from ..page import OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
 from ..tables import Table
 from .portfolio_risk import daily_asset_returns
@@ -16,6 +16,9 @@ REALIZED_WINDOW = 21
 #: A day whose next month ran this much hotter than forecast is a risk surprise.
 SURPRISE = 1.5
 NAMED = 8
+#: One name carrying more than this share of the book's risk on a typical day needs a look;
+#: without the bars to measure risk, fewer effective names than the second does.
+TOP_RISK_SHARE, MIN_EFFECTIVE_NAMES = 0.4, 5
 #: Charts are drawn weekly: a point a day for years of daily shares is megabytes of SVG.
 SAMPLE_EVERY = 5
 
@@ -74,11 +77,13 @@ def build_risk_over_time(returns: pd.Series, holdings: pd.DataFrame, bars) -> Se
     section = Section("Risk Over Time")
     crowding = concentration(holdings)
 
+    path = pd.DataFrame()
     if asset_returns is not None and len(asset_returns) > COVARIANCE_WINDOW + REALIZED_WINDOW:
         path = risk_path(holdings, asset_returns)
         if not path.empty:
             _forecast(section, returns, path)
             _risk_shares(section, path.drop(columns="predicted"))
+    _concentration_finding(section, path, crowding)
 
     held = crowding.dropna()
     if not held.empty:
@@ -116,6 +121,30 @@ def build_risk_over_time(returns: pd.Series, holdings: pd.DataFrame, bars) -> Se
         section.chart(chart("Effective Number of Names", names, height=3.0))
         section.chart(chart("Top-3 and Largest Position", top, height=3.0, y="pct"))
     return section if not section.empty else None
+
+
+def _concentration_finding(section: Section, path: pd.DataFrame, crowding: pd.DataFrame) -> None:
+    """How much of the book's risk sits in one name on a typical day -- or, without risk, how few names it is."""
+    if not path.empty:
+        shares = path.drop(columns="predicted").clip(lower=0)
+        shares = shares.div(shares.sum(axis="columns").replace(0, np.nan), axis="index").dropna(how="all")
+        if not shares.empty:
+            top = shares.max(axis="columns")
+            leader = shares.idxmax(axis="columns").mode().iloc[0]
+            typical = float(top.median())
+            section.finding(OK if typical <= TOP_RISK_SHARE else WARN, "Risk from the top name, typical day",
+                            f"{typical:.0%} (most often {leader})",
+                            f"On a typical day the riskiest name carried {typical:.0%} of the book's predicted "
+                            f"volatility, {leader} more often than any other. A position can be a modest weight "
+                            f"and still most of the risk. Over {TOP_RISK_SHARE:.0%} needs a look.", key="risk_conc")
+            return
+    effective = crowding["effective"].dropna()
+    if len(effective):
+        typical = float(effective.median())
+        section.finding(OK if typical >= MIN_EFFECTIVE_NAMES else WARN, "Effective number of names, typical day",
+                        f"{typical:.1f}", "Ten equal positions count as ten, one large and nine small as barely more "
+                        f"than one. Without the bars to measure risk, fewer than {MIN_EFFECTIVE_NAMES} needs a look.",
+                        key="risk_conc")
 
 
 def _forecast(section: Section, returns: pd.Series, path: pd.DataFrame) -> None:

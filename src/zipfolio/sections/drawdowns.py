@@ -66,7 +66,7 @@ def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | 
             section.finding(OK if tail >= BAD_DAYS_RATIO * market_tail else WARN, "Bad days: average of the worst 5%",
                             f"{tail:.1%} vs {market_tail:.1%}",
                             f"The average loss on the strategy's worst 5% of days (expected shortfall) against "
-                            f"{name}'s. More than {BAD_DAYS_RATIO:g}x {name}'s needs a look.", key="bad_days")
+                            f"{name}'s. More than {BAD_DAYS_RATIO:g}x {name}'s needs a look.")
     else:
         section.finding(OK if depth >= DEEP_DRAWDOWN else WARN, "Max drawdown", f"{depth:.1%}",
                         f"No benchmark to compare with; deeper than {DEEP_DRAWDOWN:.0%} needs a look.", key="max_dd")
@@ -74,7 +74,7 @@ def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | 
         tail = expected_shortfall(returns)
         section.finding(OK if tail >= BAD_DAYS_FLOOR else WARN, "Bad days: average of the worst 5%", f"{tail:.1%}",
                         f"The average loss on the strategy's worst 5% of days (expected shortfall). No benchmark to "
-                        f"compare with; worse than {BAD_DAYS_FLOOR:.0%} a day needs a look.", key="bad_days")
+                        f"compare with; worse than {BAD_DAYS_FLOOR:.0%} a day needs a look.")
     longest, ongoing = longest_underwater(returns)
     if longest > pd.Timedelta(0):
         months = longest.days / 30.44
@@ -82,8 +82,7 @@ def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | 
                         f"{months:.0f} months" + (", not recovered" if ongoing else ""),
                         "From a high to the day the strategy was back above it"
                         + (" -- it still is not, at the end of the backtest." if ongoing else ".")
-                        + f" Over {LONG_UNDERWATER_MONTHS} months needs a look: few would hold on that long.",
-                        key="underwater")
+                        + f" Over {LONG_UNDERWATER_MONTHS} months needs a look: few would hold on that long.")
 
 
 def drawdown_attribution(returns: pd.Series, holdings: pd.DataFrame, transactions: pd.DataFrame,
@@ -163,7 +162,7 @@ def build_drawdowns(returns, holdings, transactions, orders=None, sectors=None, 
                         f"{worst.index[0]}, {share:.0%} of it",
                         f"The worst drawdown, {first['Depth']:.1%} from {first['Peak']:%b %Y} to "
                         f"{first['Valley']:%b %Y}: {worst.index[0]} cost {abs(worst.iloc[0]) * 100:.1f} points of it. "
-                        f"One name making {ONE_NAME_SHARE:.0%} or more of it needs a look.", key="one_name")
+                        f"One name making {ONE_NAME_SHARE:.0%} or more of it needs a look.")
     section.table(Table(worst.head(10).to_frame("Points of the Drawdown"), None, "{:.2%}".format),
                   title=f"Drawdown #1, by Name ({drawdowns.iloc[0]['Depth']:.1%})", first_header="Symbol")
 

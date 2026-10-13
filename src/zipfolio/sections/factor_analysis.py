@@ -243,19 +243,22 @@ def _alpha_finding(section: Section, fit, names: list[str], model: str, descript
     alpha, p = fit.params["const"] * 252, fit.pvalues["const"]
     significant = p < 0.05
     verdict = "significant" if significant else f"not significant (p = {p:.2f})"
-    status = OK if significant and alpha > 0 else WARN if significant else INFO
     value = f"{alpha:+.1%} a year" + ("" if significant else ", n.s.")
+    status = OK if significant and alpha > 0 else WARN
+    why = ("A return the factors do not explain, and too steady to be chance." if status == OK else
+           "No evidence of a return beyond what the factors pay: an alpha that is not significant may be "
+           "luck, and a negative one is a cost.")
     if model == "market":
         market = description.split(": ", 1)[-1]
         beta = fit.params[names[0]]
         section.finding(INFO, "Beta to the market", f"{beta:.2f}", f"Market model: {market}.")
-        section.finding(status, "Alpha", value, f"Alpha over {market}, {verdict}.")
+        section.finding(status, "Alpha over the market", value, f"Over {market}: {verdict}. {why}", key="alpha")
         return
     exposures = [f"{name} {fit.params[name]:.2f}" for name in names if fit.pvalues[name] < 0.05]
-    section.finding(status, "Alpha", value,
-                    f"After {description}: {verdict}. " + (
+    section.finding(status, "Alpha after factors", value,
+                    f"After {description}: {verdict}. {why} " + (
                         f"Significant exposures: {', '.join(exposures)}." if exposures else
-                        "No factor exposure is significant."))
+                        "No factor exposure is significant."), key="alpha")
 
 
 def _p_value(value: float) -> str:

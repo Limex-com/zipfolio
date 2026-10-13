@@ -129,11 +129,7 @@ def _open_and_streak_findings(section: Section, trades: pd.DataFrame, positions:
         section.finding(OK if share <= OPEN_SHARE else WARN, "Profit still open at the end", f"{share:.0%}",
                         f"{int(still_open.sum()):,} positions were still held when the backtest ended; they are "
                         f"counted as sold at the last price, for {money(paper, 0)} of the {money(total, 0)} net. "
-                        f"Over {OPEN_SHARE:.0%} means much of the result is a paper gain.", key="open_end")
-    else:
-        section.finding(WARN, "Profit still open at the end", "no net profit",
-                        f"The trades lost {money(-total, 0)} net, {money(paper, 0)} of it in positions still held at "
-                        "the end, counted as sold at the last price.", key="open_end")
+                        f"Over {OPEN_SHARE:.0%} means much of the result is a paper gain.")
     streak = losing_streak(trades.sort_values("close_dt")["pnl"].astype(float))
     section.finding(INFO, "Longest losing streak", f"{streak} trades",
                     "The most losing trades in a row, in the order they closed.")

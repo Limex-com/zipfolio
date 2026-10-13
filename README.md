@@ -82,9 +82,9 @@ the table. Thresholds are constants at the top of each section's module.
 
 | Part | The four checks |
 | --- | --- |
-| I | annual return vs the benchmark; total return without the best 5 days; luck test (chance of a loss); profit from the top 2 names |
-| II | max drawdown vs the benchmark; longest time below a peak; average of the worst 5% of days; worst drawdown's share from one name |
-| III | largest position on a typical day; max gross leverage; winning trades and profit factor; profit still open at the end |
+| I | annual return vs the benchmark; alpha after the factors (or over the market model); total return without the best 5 days; luck test (chance of a loss) |
+| II | max drawdown vs the benchmark; up / down capture; the riskiest name's share of predicted volatility (effective names without bars); the largest sector's share of the gross book |
+| III | largest position on a typical day; profit from the top 2 names; profit from the best 5 trades; winning trades and profit factor |
 | IV | fill timing (the return filled a bar later, when orders fill on their signal bar); fill realism; costs' share of gross profit; liquidity at the capacity base |
 
 The sections follow in four parts, each the question a reader brings:

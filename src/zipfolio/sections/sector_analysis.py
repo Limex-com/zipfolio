@@ -4,10 +4,22 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ..page import Section
+from ..page import OK, WARN, Section
 from ..style import anchor_zero, chart, held_only, mark_isolated
+from ..sectors import UNCLASSIFIED
 from ..tables import Table, captured_tables
 from .round_trips import extract_round_trips
+
+#: One sector holding more than this share of the gross book on a typical day needs a look.
+SECTOR_SHARE = 0.4
+
+
+def sector_concentration(positions: pd.DataFrame, sectors: dict[str, str]) -> pd.DataFrame:
+    """Each sector's share of the gross book (longs and shorts both counted), per session held."""
+    values = positions.drop(columns="cash", errors="ignore").abs()
+    by_sector = values.T.groupby(lambda symbol: sectors.get(symbol, UNCLASSIFIED)).sum().T
+    gross = by_sector.sum(axis="columns")
+    return by_sector.div(gross.where(gross > 0), axis="index").dropna(how="all")
 
 
 def build_sector_analysis(returns, positions, transactions, sectors: dict[str, str]) -> Section:
@@ -20,6 +32,16 @@ def build_sector_analysis(returns, positions, transactions, sectors: dict[str, s
     from pyfolio import plotting, pos, round_trips
 
     section = Section("Sector Analysis")
+    shares = sector_concentration(positions, sectors).drop(columns=UNCLASSIFIED, errors="ignore")
+    if not shares.empty and shares.notna().any().any():
+        top = shares.max(axis="columns")
+        leader = shares.idxmax(axis="columns").dropna().mode().iloc[0]
+        typical = float(top.median())
+        section.finding(OK if typical <= SECTOR_SHARE else WARN, "Largest sector, typical day",
+                        f"{typical:.0%} ({leader})",
+                        f"On a typical day the largest sector held {typical:.0%} of the gross book, {leader} more "
+                        f"often than any other. Names in one sector fall together; over {SECTOR_SHARE:.0%} needs a "
+                        "look.", key="sector")
     exposures = pos.get_sector_exposures(positions, sectors)
     allocation = pos.get_percent_alloc(exposures).drop("cash", axis="columns")
     average = allocation.mean().sort_values(ascending=False)
