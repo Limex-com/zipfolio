@@ -7,7 +7,7 @@ import pandas as pd
 
 from ..currency import compact, money, money_formatter, unit
 from ..inputs import utc_dates
-from ..page import BAD, INFO, OK, WARN, Section
+from ..page import BAD, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart, color_mix
 from ..tables import Table
 
@@ -95,9 +95,10 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
         share = total_costs / gross_profit
         status = BAD if net_profit < 0 or share >= 0.5 else WARN if share >= 0.25 else OK
         note = "Trading costs turned a gross profit into a loss. " if net_profit < 0 else ""
-        section.finding(status, "Costs' share of gross profit", f"{share:.0%}", note + detail)
+        section.finding(status, "Costs' share of gross profit", f"{share:.0%}", note + detail, key="costs")
     elif total_costs > 0:
-        section.finding(INFO, "Trading costs", f"{compact(total_costs)} on a gross loss", detail)
+        section.finding(WARN, "Costs' share of gross profit", f"{compact(total_costs)} on a gross loss",
+                        "The strategy lost money before costs; costs only added to it. " + detail, key="costs")
 
     by_symbol = pd.DataFrame({"Commission": commission_by_symbol, "Slippage": slippage_by_symbol}).fillna(0.0)
     by_symbol["Total"] = by_symbol.sum(axis="columns")

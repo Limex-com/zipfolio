@@ -14,7 +14,7 @@ import pandas as pd
 
 from ..currency import money
 from ..inputs import utc_dates
-from ..page import BAD, INFO, OK, WARN, Section
+from ..page import BAD, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table
 
@@ -171,11 +171,14 @@ def build_next_bar_fills(returns, holdings, transactions, fill_bars, settings) -
     if base > 0:
         lost = (base - after) / base
         if after <= 0:
-            section.finding(BAD, label, value, "Waiting one bar wipes out the return. " + detail)
+            section.finding(BAD, label, value, "Waiting one bar wipes out the return. " + detail, key="timing")
         else:
             status = BAD if lost >= BAD_SHARE else WARN if lost >= WARN_SHARE else OK
             section.finding(status, label, value, f"Waiting one bar costs {max(lost, 0):.0%} of the return. "
-                            + detail)
+                            + detail, key="timing")
     else:
-        section.finding(INFO, label, value, detail)
+        section.finding(OK if after >= base else WARN, label, value,
+                        "The backtest lost money; waiting one bar " + ("does not make it worse. " if after >= base
+                                                                        else "makes it worse. ") + detail,
+                        key="timing")
     return section

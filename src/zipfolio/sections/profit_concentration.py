@@ -84,18 +84,19 @@ def build_profit_concentration(returns, positions, transactions) -> Section | No
     section.chart(chart("Cumulative Returns Without the Best Days", cumulative, height=4.0, y="growth"))
 
     base = ep.cum_returns_final(returns)
+    smallest = counts[0]
+    rest = ep.cum_returns_final(curves[f"Without the best {smallest}"])
+    detail = f"Total return {base:.1%}; without its {smallest} best days of {len(returns):,}, {rest:.1%}."
     if base > 0:
         fewest = next((count for count in counts if ep.cum_returns_final(curves[f"Without the best {count}"]) <= 0),
                       None)
-        smallest = counts[0]
-        shown = fewest or smallest
-        rest = ep.cum_returns_final(curves[f"Without the best {shown}"])
-        detail = (f"Total return {base:.1%}; without its {shown} best days of {len(returns):,}, "
-                  f"{rest:.1%}.")
         status = BAD if fewest == smallest else WARN if fewest else OK
-        note = (f"{shown} sessions made all of the return. " if fewest else
+        note = (f"{fewest} sessions made all of the return. " if fewest else
                 "The return does not hang on a few days. ") + detail
-        section.finding(status, f"Total return without best {shown} days", f"{base:.1%} → {rest:.1%}", note)
+    else:
+        status, note = WARN, "The backtest lost money; there is no return to spread over days. " + detail
+    section.finding(status, f"Total return without the best {smallest} days", f"{base:.1%} → {rest:.1%}", note,
+                    key="best_days")
 
     trades = None
     if positions is not None and transactions is not None:
@@ -171,7 +172,7 @@ def build_profit_concentration(returns, positions, transactions) -> Section | No
                         f"{len(pnl):,} closed trades in all; without the best {BEST_TRADES}, {money(total - top)}. "
                         "Over 100% means the rest lost money together.")
     status = BAD if loss >= BAD_LOSS else WARN if loss >= WARN_LOSS else OK
-    section.finding(status, "Luck test: chance of a loss", f"{loss:.0%}",
+    section.finding(status, "Luck test: chance of a loss", f"{loss:.0%}", key="luck", note=
                     f"Redrawing the same trades at random, the total is a loss {loss:.0%} of the time; a bad "
                     f"case (5th percentile) {money(low, 0)}, a good one {money(high, 0)}.")
     return section

@@ -57,16 +57,6 @@ def asymmetric_beta(returns: pd.Series, benchmark: pd.Series, rising: bool) -> f
     return float(np.polyfit(days["benchmark"], days["strategy"], 1)[0])
 
 
-#: Worst days this many times as bad as the benchmark's need a look.
-BAD_DAYS_RATIO = 1.25
-
-
-def expected_shortfall(returns: pd.Series, level: float = 0.05) -> float:
-    """The average of the worst ``level`` share of daily returns."""
-    cut = returns.quantile(level)
-    return float(returns[returns <= cut].mean())
-
-
 def build_market_regimes(returns: pd.Series, benchmark: pd.Series | None) -> Section | None:
     if benchmark is None:
         return None
@@ -87,12 +77,6 @@ def build_market_regimes(returns: pd.Series, benchmark: pd.Series | None) -> Sec
         f"Months {name} rose": f"{int((monthly['benchmark'] > 0).sum()):,} of {len(monthly):,}",
     })
     section.table(Table(facts.to_frame("Value"), None), title=f"Against {name}", first_header="Measure")
-    tail, market_tail = expected_shortfall(returns), expected_shortfall(benchmark)
-    if market_tail < 0:
-        section.finding(OK if tail >= BAD_DAYS_RATIO * market_tail else WARN, "Bad days: average of the worst 5%",
-                        f"{tail:.1%} vs {market_tail:.1%}",
-                        f"The average loss on the strategy's worst 5% of days (expected shortfall) against "
-                        f"{name}'s. More than {BAD_DAYS_RATIO:g}x {name}'s needs a look.")
     if np.isfinite(up) and np.isfinite(down):
         better = down <= 0 or up / down >= 1
         section.finding(OK if better else WARN, "Up / down capture", f"{up:.0%} / {down:.0%}",

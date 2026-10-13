@@ -41,6 +41,24 @@ GROUPS: list[tuple[str, list[str]]] = [
 ]
 
 
+#: The scorecard: four checks per part, always the same sixteen, so two backtests' scores compare.
+#: Each is ``(key, label shown when the check could not be made)``; the sections fill the slots.
+SCORECARD: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Where the Return Came From", [
+        ("return", "Annual return"), ("best_days", "Total return without the best 5 days"),
+        ("luck", "Luck test: chance of a loss"), ("top_names", "Profit from the top 2 names")]),
+    ("What It Risked", [
+        ("max_dd", "Max drawdown"), ("underwater", "Longest time below a peak"),
+        ("bad_days", "Bad days: average of the worst 5%"), ("one_name", "Worst drawdown from one name")]),
+    ("How It Holds and Trades", [
+        ("largest", "Largest position, typical day"), ("leverage", "Max gross leverage"),
+        ("win_pf", "Winning trades · profit factor"), ("open_end", "Profit still open at the end")]),
+    ("Can It Be Traded", [
+        ("timing", "Fill timing"), ("realism", "Fill realism"),
+        ("costs", "Costs' share of gross profit"), ("liquidity", "Liquidity")]),
+]
+
+
 @dataclass
 class Finding:
     """One row of the summary: a measure, its value, and how much it matters.
@@ -54,6 +72,7 @@ class Finding:
     value: str
     note: str = ""
     section: str = ""
+    key: str = ""
 
 
 @dataclass
@@ -79,8 +98,9 @@ class Section:
     def anchor(self) -> str:
         return anchor(self.title)
 
-    def finding(self, status: str, label: str, value: str, note: str = "") -> None:
-        self.findings.append(Finding(status, label, value, note, self.title))
+    def finding(self, status: str, label: str, value: str, note: str = "", key: str = "") -> None:
+        """Record a finding; ``key`` puts it in its slot of the scorecard (``SCORECARD``)."""
+        self.findings.append(Finding(status, label, value, note, self.title, key))
 
     def chart(self, svg: str | None) -> None:
         if svg:
@@ -129,50 +149,65 @@ TILE_NOTES = {OK: "within a safe range", WARN: "check before trusting the result
 
 
 def summary_html(groups) -> str:
-    """The checks at a glance: a score, three counts, one table of verdicts, one line of context.
+    """The scorecard: sixteen checks, four per part, a score out of sixteen, one line of context.
 
-    Every rated finding (ok, warn, bad) is a row -- measure, value, verdict --
-    under its part of the page, linked to its section, its reasoning on hover.
-    Findings that only describe (``INFO``) are not verdicts; they go on one line
-    under the table.
+    Every slot of ``SCORECARD`` is a row whether or not its check could be made
+    -- one that could not reads N/A and does not pass -- so the score always
+    counts out of the same sixteen. Findings outside the scorecard, and a
+    second finding for a slot already filled, are the context line.
     """
-    order = {title: rank for rank, title in enumerate(title for _, titles in GROUPS for title in titles)}
-    rated, context, rows = [], [], []
-    for number, (name, members) in enumerate(groups):
-        findings = [finding for section in members if not section.failed for finding in section.findings]
-        findings.sort(key=lambda f: order.get(f.section, 99))
-        verdicts = [f for f in findings if f.status in BADGES]
-        context += [f for f in findings if f.status not in BADGES]
-        rated += verdicts
-        if verdicts:
-            rows.append(f'<tr class="grp"><td colspan="3"><a href="#part-{number + 1}">{_numeral(number)} &middot; '
-                        f'{html.escape(name or "More")}</a></td></tr>')
-        rows += [
-            f'<tr title="{html.escape(f.note)}"><td><a href="#{anchor(f.section)}">{html.escape(f.label)}</a></td>'
-            f'<td class="v">{html.escape(f.value)}</td>'
-            f'<td class="b"><span class="badge {f.status}">{BADGES[f.status]}</span></td></tr>'
-            for f in verdicts]
-    if not rated and not context:
+    findings = [finding for _, members in groups for section in members if not section.failed
+                for finding in section.findings]
+    if not findings:
         return ""
+    order = {title: rank for rank, title in enumerate(title for _, titles in GROUPS for title in titles)}
+    findings.sort(key=lambda f: order.get(f.section, 99))
+    slots: dict[str, Finding] = {}
+    context = []
+    keys = {key for _, checks in SCORECARD for key, _ in checks}
+    for finding in findings:
+        if finding.key in keys and finding.key not in slots:
+            slots[finding.key] = finding
+        elif finding.key not in keys or finding.status == INFO:
+            context.append(finding)
+    part_of = {name: number for number, (name, _) in enumerate(groups)}
 
-    counts = {status: sum(f.status == status for f in rated) for status in BADGES}
-    tiles = []
-    if rated:
-        share = counts[OK] / len(rated)
-        tone = OK if share >= 0.75 else WARN if share >= 0.5 else BAD
-        tiles.append(f'<div class="tile {tone}"><div class="k">Checks Passed</div>'
-                     f'<div class="n">{counts[OK]}/{len(rated)}</div><div class="s">{share:.0%} hold up</div></div>')
-        tiles += [f'<div class="tile {status}"><div class="k">{BADGES[status]}</div><div class="n">{counts[status]}</div>'
-                  f'<div class="s">{TILE_NOTES[status]}</div></div>' for status in BADGES]
-    table = ('<table class="checks"><thead><tr><th>Check</th><th>Value</th><th>Verdict</th></tr></thead>'
-             f'<tbody>{"".join(rows)}</tbody></table>') if rows else ""
+    rows, statuses = [], []
+    for number, (name, checks) in enumerate(SCORECARD):
+        link = f'#part-{part_of[name] + 1}' if name in part_of else "#summary"
+        rows.append(f'<tr class="grp"><td colspan="3"><a href="{link}">{_numeral(number)} &middot; '
+                    f'{html.escape(name)}</a></td></tr>')
+        for key, fallback in checks:
+            found = slots.get(key)
+            if found is None or found.status not in BADGES:
+                statuses.append(None)
+                rows.append(f'<tr class="na" title="Not available for this backtest."><td>{html.escape(fallback)}</td>'
+                            '<td class="v">&mdash;</td><td class="b"><span class="badge na">N/A</span></td></tr>')
+                continue
+            statuses.append(found.status)
+            rows.append(f'<tr title="{html.escape(found.note)}"><td><a href="#{anchor(found.section)}">'
+                        f'{html.escape(found.label)}</a></td><td class="v">{html.escape(found.value)}</td>'
+                        f'<td class="b"><span class="badge {found.status}">{BADGES[found.status]}</span></td></tr>')
+
+    total = len(statuses)
+    counts = {status: statuses.count(status) for status in BADGES}
+    missing = statuses.count(None)
+    share = counts[OK] / total
+    tone = OK if share >= 0.75 else WARN if share >= 0.5 else BAD
+    tiles = [f'<div class="tile {tone}"><div class="k">Score</div><div class="n">{counts[OK]}/{total}</div>'
+             f'<div class="s">checks that hold up' + (f'; {missing} not available' if missing else "")
+             + '</div></div>']
+    tiles += [f'<div class="tile {status}"><div class="k">{BADGES[status]}</div><div class="n">{counts[status]}</div>'
+              f'<div class="s">{TILE_NOTES[status]}</div></div>' for status in BADGES]
     facts = " &middot; ".join(
         f'<a href="#{anchor(f.section)}" title="{html.escape(f.note)}">{html.escape(f.label)} '
-        f'<b>{html.escape(f.value)}</b></a>' for f in context)
+        f'<b class="{f.status}">{html.escape(f.value)}</b></a>' for f in context)
     return ('<section id="summary" class="summary"><h2>Summary</h2>'
-            '<p class="caption lead">Each check is held against a fixed threshold. Hover a row for the reasoning; '
-            'click it for the numbers.</p>'
-            f'<div class="tiles">{"".join(tiles)}</div>{table}'
+            f'<p class="caption lead">The same {total} checks for every backtest, four per part, each against a '
+            'fixed threshold. Hover a row for the reasoning; click it for the numbers.</p>'
+            f'<div class="tiles">{"".join(tiles)}</div>'
+            '<table class="checks"><thead><tr><th>Check</th><th>Value</th><th>Verdict</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>'
             + (f'<p class="context"><span>For context:</span> {facts}</p>' if facts else "")
             + '</section>')
 
@@ -290,6 +325,9 @@ def page_html(title: str, returns: pd.Series, benchmark, analytics: str, section
   .badge.ok {{ background: #eaf3dc; color: #4f7a00; }}
   .badge.warn {{ background: #fdf1d6; color: #a87700; }}
   .badge.bad {{ background: #f6dfe5; color: #a3405a; }}
+  .badge.na {{ background: #eee; color: #888; }}
+  table.checks tr.na td {{ color: #999; }}
+  .context b.warn, .context b.bad {{ color: #a87700; }}
   .context {{ color: #555; font-size: 12px; line-height: 1.8; margin: 8px 0 0; }}
   .context span {{ color: grey; }}
   .context a {{ color: #555; white-space: nowrap; }}

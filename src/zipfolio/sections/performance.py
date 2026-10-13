@@ -38,7 +38,8 @@ def build_performance(returns, benchmark, positions, transactions) -> Section:
         market = ep.annual_return(benchmark)
         section.finding(OK if annual >= market else WARN, f"Annual return vs {name}", f"{annual:.1%} vs {market:.1%}",
                         f"Compounded a year, over the same sessions. Below {name}'s, holding {name} would have "
-                        "done better.")
+                        "done better.", key="return")
     else:
-        section.finding(OK if annual > 0 else WARN, "Annual return", f"{annual:.1%}", "Compounded a year.")
+        section.finding(OK if annual > 0 else WARN, "Annual return", f"{annual:.1%}", "Compounded a year.",
+                        key="return")
     return section

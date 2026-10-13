@@ -9,7 +9,7 @@ import pandas as pd
 
 from ..currency import money, money_formatter, unit
 from ..inputs import utc_dates
-from ..page import INFO, OK, WARN, Section
+from ..page import OK, WARN, Section
 from ..style import LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
 from ..tables import Table
 from .round_trips import extract_round_trips
@@ -53,21 +53,24 @@ def commission_by_day(orders: pd.DataFrame | None, index: pd.DatetimeIndex, colu
 
 def _concentration_finding(section: Section, summary: pd.DataFrame) -> None:
     traded = summary[summary["Days Held"] > 0]
-    if len(traded) < 3:
-        return
     total = float(traded["Net PnL"].sum())
+    if len(traded) < 3:
+        section.finding(WARN, "Profit from the top 2 names", f"{len(traded)} name{'s' if len(traded) != 1 else ''} "
+                        "traded", "Two names or fewer: the whole result is one or two bets.", key="top_names")
+        return
     if total > 0:
         top = traded["Net PnL"].nlargest(2)
         share = float(top.sum()) / total
         section.finding(WARN if share >= 0.75 else OK, "Profit from the top 2 names",
                         f"{share:.0%} ({top.index[0]}, {top.index[1]})",
                         f"{top.index[0]} and {top.index[1]} made {share:.0%} of the net PnL; "
-                        f"{len(traded):,} instruments held in all. Over 100% means the rest lost money.")
+                        f"{len(traded):,} instruments held in all. Over 100% means the rest lost money.",
+                        key="top_names")
     else:
         worst = traded["Net PnL"].nsmallest(2)
-        section.finding(INFO, "Biggest losers", f"{worst.index[0]}, {worst.index[1]}",
+        section.finding(WARN, "Profit from the top 2 names", "no net profit",
                         f"A net loss of {money(-total, 0)}; {worst.index[0]} and {worst.index[1]} lost the most "
-                        f"of {len(traded):,} instruments held.")
+                        f"of {len(traded):,} instruments held.", key="top_names")
 
 
 def build_instruments(returns, holdings, positions, transactions, orders=None) -> Section:

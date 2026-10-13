@@ -23,6 +23,14 @@ VERY_DEEP_DRAWDOWN = -0.35
 LONG_UNDERWATER_MONTHS = 12
 #: One name making this share of the worst drawdown or more needs a look.
 ONE_NAME_SHARE = 0.5
+#: The worst 5% of days this many times as bad as the benchmark's need a look; without one, worse than the floor.
+BAD_DAYS_RATIO, BAD_DAYS_FLOOR = 1.25, -0.03
+
+
+def expected_shortfall(returns: pd.Series, level: float = 0.05) -> float:
+    """The average of the worst ``level`` share of daily returns."""
+    cut = returns.quantile(level)
+    return float(returns[returns <= cut].mean())
 
 
 def longest_underwater(returns: pd.Series) -> tuple[pd.Timedelta, bool]:
@@ -51,10 +59,22 @@ def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | 
         section.finding(OK if depth >= market and depth >= VERY_DEEP_DRAWDOWN else WARN, f"Max drawdown vs {name}",
                         f"{depth:.1%} vs {market:.1%}",
                         f"The strategy's deepest fall from a peak against {name}'s over the same sessions. Deeper "
-                        f"than {name}'s, or than {VERY_DEEP_DRAWDOWN:.0%} whatever {name} did, needs a look.")
+                        f"than {name}'s, or than {VERY_DEEP_DRAWDOWN:.0%} whatever {name} did, needs a look.",
+                        key="max_dd")
+        tail, market_tail = expected_shortfall(returns), expected_shortfall(benchmark)
+        if market_tail < 0:
+            section.finding(OK if tail >= BAD_DAYS_RATIO * market_tail else WARN, "Bad days: average of the worst 5%",
+                            f"{tail:.1%} vs {market_tail:.1%}",
+                            f"The average loss on the strategy's worst 5% of days (expected shortfall) against "
+                            f"{name}'s. More than {BAD_DAYS_RATIO:g}x {name}'s needs a look.", key="bad_days")
     else:
         section.finding(OK if depth >= DEEP_DRAWDOWN else WARN, "Max drawdown", f"{depth:.1%}",
-                        f"No benchmark to compare with; deeper than {DEEP_DRAWDOWN:.0%} needs a look.")
+                        f"No benchmark to compare with; deeper than {DEEP_DRAWDOWN:.0%} needs a look.", key="max_dd")
+    if benchmark is None:
+        tail = expected_shortfall(returns)
+        section.finding(OK if tail >= BAD_DAYS_FLOOR else WARN, "Bad days: average of the worst 5%", f"{tail:.1%}",
+                        f"The average loss on the strategy's worst 5% of days (expected shortfall). No benchmark to "
+                        f"compare with; worse than {BAD_DAYS_FLOOR:.0%} a day needs a look.", key="bad_days")
     longest, ongoing = longest_underwater(returns)
     if longest > pd.Timedelta(0):
         months = longest.days / 30.44
@@ -62,7 +82,8 @@ def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | 
                         f"{months:.0f} months" + (", not recovered" if ongoing else ""),
                         "From a high to the day the strategy was back above it"
                         + (" -- it still is not, at the end of the backtest." if ongoing else ".")
-                        + f" Over {LONG_UNDERWATER_MONTHS} months needs a look: few would hold on that long.")
+                        + f" Over {LONG_UNDERWATER_MONTHS} months needs a look: few would hold on that long.",
+                        key="underwater")
 
 
 def drawdown_attribution(returns: pd.Series, holdings: pd.DataFrame, transactions: pd.DataFrame,
@@ -142,7 +163,7 @@ def build_drawdowns(returns, holdings, transactions, orders=None, sectors=None, 
                         f"{worst.index[0]}, {share:.0%} of it",
                         f"The worst drawdown, {first['Depth']:.1%} from {first['Peak']:%b %Y} to "
                         f"{first['Valley']:%b %Y}: {worst.index[0]} cost {abs(worst.iloc[0]) * 100:.1f} points of it. "
-                        f"One name making {ONE_NAME_SHARE:.0%} or more of it needs a look.")
+                        f"One name making {ONE_NAME_SHARE:.0%} or more of it needs a look.", key="one_name")
     section.table(Table(worst.head(10).to_frame("Points of the Drawdown"), None, "{:.2%}".format),
                   title=f"Drawdown #1, by Name ({drawdowns.iloc[0]['Depth']:.1%})", first_header="Symbol")
 

@@ -128,13 +128,18 @@ def build_execution(transactions: pd.DataFrame, orders: pd.DataFrame | None,
                        f"{empty:,} orders asked for no shares -- a rebalance to a weight already held. "
                        "They are left out of every count here."))
     section.side.append("<h3>Realism Checks</h3>" + _checks_html(checks))
-    for status, title, detail, *summary in checks:
-        if summary and (status in (BAD, WARN) or summary[0] == TIMING):
-            label, value = summary
-            section.finding(status, label, value, detail)
-    if not any(check[0] in (BAD, WARN) for check in checks if check[3:4] != (TIMING,)):
-        section.finding(OK, "Fill realism checks", "all passed",
-                        "Every fill priced inside its bar, at a size the bar could take; every order filled.")
+    timing = next(check for check in checks if check[3:4] == (TIMING,))
+    section.finding(timing[0], timing[3], timing[4], timing[2], key="timing")
+    flagged = sorted((check for check in checks if check[3:4] != (TIMING,) and check[0] in (BAD, WARN)),
+                     key=lambda check: check[0] != BAD)
+    if flagged:
+        worst = flagged[0]
+        section.finding(worst[0], "Fill realism", f"{worst[3][0].lower()}{worst[3][1:]}: {worst[4]}",
+                        " ".join(check[2] for check in flagged), key="realism")
+    else:
+        section.finding(OK, "Fill realism", "all checks passed",
+                        "Every fill priced inside its bar, at a size the bar could take; every order filled.",
+                        key="realism")
 
     types = book.groupby("type")["state"].value_counts().unstack(fill_value=0)
     for state in ("filled", "partial", "unfilled"):

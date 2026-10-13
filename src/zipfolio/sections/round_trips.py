@@ -105,7 +105,7 @@ def build_round_trips(returns, positions, transactions) -> Section | None:
                     f"{(pnl > 0).mean():.0%} · {shown}",
                     f"{len(pnl):,} closed trades; median holding time {trades['duration'].median().days} days. "
                     "The profit factor is what the winning trades made over what the losing ones lost: "
-                    "under 1, the trades lose money on balance.")
+                    "under 1, the trades lose money on balance.", key="win_pf")
     return section
 
 
@@ -129,7 +129,11 @@ def _open_and_streak_findings(section: Section, trades: pd.DataFrame, positions:
         section.finding(OK if share <= OPEN_SHARE else WARN, "Profit still open at the end", f"{share:.0%}",
                         f"{int(still_open.sum()):,} positions were still held when the backtest ended; they are "
                         f"counted as sold at the last price, for {money(paper, 0)} of the {money(total, 0)} net. "
-                        f"Over {OPEN_SHARE:.0%} means much of the result is a paper gain.")
+                        f"Over {OPEN_SHARE:.0%} means much of the result is a paper gain.", key="open_end")
+    else:
+        section.finding(WARN, "Profit still open at the end", "no net profit",
+                        f"The trades lost {money(-total, 0)} net, {money(paper, 0)} of it in positions still held at "
+                        "the end, counted as sold at the last price.", key="open_end")
     streak = losing_streak(trades.sort_values("close_dt")["pnl"].astype(float))
     section.finding(INFO, "Longest losing streak", f"{streak} trades",
                     "The most losing trades in a row, in the order they closed.")

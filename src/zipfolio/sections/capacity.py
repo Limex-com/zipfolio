@@ -70,10 +70,12 @@ def build_capacity(returns, positions, transactions, market_data) -> Section:
         section.finding(WARN, f"Liquidity at {millions(base)}",
                         f"{slow:,} names over a day to sell" if slow else f"{heavy:,} names over 5% of volume",
                         f"At a {millions(base)} capital base, taking at most 20% of a day's volume, {slow:,} names "
-                        f"would take over a day to sell; {heavy:,} had a day's fills over 5% of its volume.")
+                        f"would take over a day to sell; {heavy:,} had a day's fills over 5% of its volume.",
+                        key="liquidity")
     else:
         section.finding(OK, f"Liquidity at {millions(base)}", "all sellable within a day",
-                        f"At a {millions(base)} capital base, taking at most 20% of a day's volume.")
+                        f"At a {millions(base)} capital base, taking at most 20% of a day's volume.",
+                        key="liquidity")
     return section
 
 

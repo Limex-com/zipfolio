@@ -72,13 +72,22 @@ The default title is "Zipfolio Tearsheet: Portfolio, Execution & Cost Analysis"
 (`title=` changes it).
 
 The page opens with a **summary** in the look of QuantStats Pro's health
-summary: a score (checks passed out of checks made), counts of checks that hold
-up, need a look or are critical, and one table of verdicts -- measure, value,
-badge -- under the part of the report each belongs to, each row linked to its
-section with the reasoning on hover. Facts that are not verdicts (alpha that
-is not significant, turnover, the longest losing streak) go on one line under it.
-The checks and their thresholds are constants at the top of each section's module. The sections
-follow in four parts, each the question a reader brings:
+summary: a **score out of 16** -- the same sixteen checks for every backtest,
+four per part of the report (`page.SCORECARD`), so two scores compare -- the
+counts of checks that hold up, need a look or are critical, and one table of
+verdicts: measure, value, badge, each row linked to its section with the
+reasoning on hover. A check that cannot be made for a backtest reads N/A and
+does not pass. Everything else the sections found is one line of context under
+the table. Thresholds are constants at the top of each section's module.
+
+| Part | The four checks |
+| --- | --- |
+| I | annual return vs the benchmark; total return without the best 5 days; luck test (chance of a loss); profit from the top 2 names |
+| II | max drawdown vs the benchmark; longest time below a peak; average of the worst 5% of days; worst drawdown's share from one name |
+| III | largest position on a typical day; max gross leverage; winning trades and profit factor; profit still open at the end |
+| IV | fill timing (the return filled a bar later, when orders fill on their signal bar); fill realism; costs' share of gross profit; liquidity at the capacity base |
+
+The sections follow in four parts, each the question a reader brings:
 
 **I. Where the return came from**
 

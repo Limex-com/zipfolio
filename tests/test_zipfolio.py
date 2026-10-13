@@ -1032,9 +1032,10 @@ def test_the_page_is_four_parts_with_contents_and_a_summary(pyfolio, tmp_path):
     links = set(re.findall(r'href="#([^"]+)"', page))
     assert links <= ids, f"every link lands somewhere: {links - ids}"
     summary = page.split('id="summary"')[1].split("</section>")[0]
-    assert "Checks Passed" in summary
+    assert ">Score<" in summary
     rows = re.findall(r'<span class="badge (\w+)">', summary)
-    assert len(rows) >= 5, "the sections say what they found"
+    assert len(rows) == 16, "always the same sixteen checks"
+    assert rows.count("na") <= 4, "a traded book with orders fills most of them"
     passed = re.search(r'<div class="n">(\d+)/(\d+)</div>', summary)
     assert (int(passed.group(1)), int(passed.group(2))) == (rows.count("ok"), len(rows)), "the score counts the rows"
     assert 'href="#trading-costs"' in summary and 'href="#closed-trades"' in summary
@@ -1050,10 +1051,13 @@ def test_a_failed_section_says_nothing_in_the_summary(pyfolio):
     broken = Section("Execution", failed=True)
     broken.finding(BAD, "should not show", "-")
     fine = Section("Trading Costs")
-    fine.finding(BAD, "Costs ate it", "90%")
+    fine.finding(BAD, "Costs ate it", "90%", key="costs")
+    fine.finding(BAD, "Not on the card", "-")
     html = summary_html(ordered([broken, fine]))
     assert "Costs ate it" in html and "should not show" not in html
-    assert "Checks Passed" in html and ">0/1<" in html
+    assert ">0/16<" in html, "the score counts out of sixteen whatever could be checked"
+    assert html.count('class="badge na"') == 15
+    assert "Not on the card" in html.split("For context:")[1], "a finding outside the sixteen is context"
 
 
 # ----------------------------------------------------------------------------
@@ -1173,7 +1177,7 @@ def test_a_return_made_in_five_days_is_flagged(pyfolio):
     section = build_profit_concentration(returns, None, None)
 
     assert section.findings[0].status == BAD
-    assert section.findings[0].label == "Total return without best 5 days"
+    assert section.findings[0].label == "Total return without the best 5 days"
     assert section.findings[0].note.startswith("5 sessions made all of the return")
 
 
@@ -1290,7 +1294,7 @@ def test_a_losing_streak_counts_losers_in_a_row():
 
 
 def test_bad_days_are_the_average_of_the_worst_twentieth():
-    from zipfolio.sections.market_regimes import expected_shortfall
+    from zipfolio.sections.drawdowns import expected_shortfall
 
     returns = pd.Series(np.r_[np.full(95, 0.01), [-0.05, -0.04, -0.03, -0.02, -0.01]])
     assert expected_shortfall(returns) == pytest.approx(-0.03)
@@ -1308,5 +1312,5 @@ def test_risk_and_book_parts_carry_several_checks(pyfolio, tmp_path):
     summary = output.read_text(encoding="utf-8").split('id="summary"')[1].split("</table>")[0]
     parts = re.split(r'<tr class="grp">', summary)[1:]
     by_part = {re.search(r'&middot; ([^<]+)</a>', part).group(1): part.count('class="badge') for part in parts}
-    assert by_part["What It Risked"] >= 4, by_part
-    assert by_part["How It Holds and Trades"] >= 3, by_part
+    assert set(by_part.values()) == {4}, by_part
+    assert "badge na" not in summary.split("What It Risked")[1].split("How It Holds")[0], "risk is always checkable"
