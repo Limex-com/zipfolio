@@ -71,19 +71,20 @@ name the Zipfolio version that built the page and link back to this repository.
 The default title is "Zipfolio Tearsheet: Portfolio, Execution & Cost Analysis"
 (`title=` changes it).
 
-The page opens with a **summary**: one card per part of the report, each
-finding a row of measure, value and a coloured dot -- holds up, for context,
-needs a look, wrong or misleading -- and the card coloured by its worst row, so
-four cards say where the problems are. A row links to its section and gives
-the reasoning on hover; each card lists its sections, so the cards are also the
-contents. The sections follow in four parts, each the question a reader brings:
+The page opens with a **summary** in the look of QuantStats Pro's health
+summary: a score (checks passed out of checks made), counts of checks that hold
+up, need a look or are critical, and one table of verdicts -- measure, value,
+badge -- under the part of the report each belongs to, each row linked to its
+section with the reasoning on hover. Facts that are not verdicts (worst
+drawdown, turnover, largest position) go on one line under it. The sections
+follow in four parts, each the question a reader brings:
 
 **I. Where the return came from**
 
 | Section | Shown when | Contents |
 | --- | --- | --- |
 | **Performance** | always | key metrics, cumulative returns, underwater curve -- deliberately short; returns are QuantStats' job |
-| **Profit Concentration** | 50+ sessions | the return without the best 5, 10 and 20 days; the share of net PnL in the best round trips; a bootstrap of the round trips and its chance of a net loss |
+| **Profit Concentration** | 50+ sessions | the return without the best 5, 10 and 20 days; the share of net PnL in the best trades; a luck test -- the same trades redrawn at random 5,000 times -- and its chance of a net loss |
 | **Instruments** | traded | each name's PnL, contribution, weight, days held, trade stats; contribution by year; daily and round-trip return distributions per name; cumulative PnL by name |
 | **Long and Short** | the book went short | PnL, contribution, exposure, winning days and return on exposure of each side; cumulative and yearly PnL by side |
 | **Sector Analysis** | a held name has a sector | allocation over time, average and peak, profit attribution by GICS sector |
@@ -104,7 +105,7 @@ contents. The sections follow in four parts, each the question a reader brings:
 | --- | --- | --- |
 | **Positions** | traded | exposure, top positions, long/short concentration, holdings, gross leverage |
 | **Transactions** | traded | trading frequency, fill sizes, buys and sells, turnover, volume, fill times on the market's own clock |
-| **Round Trips** | 5+ round trips | summary, PnL, duration and return statistics, per symbol, lifetimes, distributions |
+| **Closed Trades** | 5+ trades | what counts as a trade, with examples (pyfolio's round trips: every sale with the shares it closes, oldest first); counts, PnL, holding time and return on cost, long and short; share of profit by symbol; lifetimes, distributions |
 
 **IV. Can it be traded**
 

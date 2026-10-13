@@ -209,7 +209,7 @@ def test_a_traded_backtest_gets_every_section(pyfolio, tmp_path):
     assert [name for name in built if name != "Portfolio Risk"] == [
         "Performance", "Profit Concentration", "Instruments", "Long and Short", "Factor Analysis",
         "Drawdowns", "Market Regimes", "Risk Over Time",
-        "Positions", "Transactions", "Round Trips",
+        "Positions", "Transactions", "Closed Trades",
         "Trading Costs"], "page order: returns, risk, the book, then whether it can be traded"
     page = output.read_text(encoding="utf-8")
     assert "Key Performance Metrics" in page and "Annual return" in page, (
@@ -574,7 +574,7 @@ def test_the_instruments_section_breaks_returns_down_by_name(pyfolio, tmp_path):
     section = page.split("<h2>Instruments</h2>")[1].split("</section>")[0]
     for heading in ("Returns by Instrument", "Contribution to Return by Instrument",
                     "Cumulative PnL by Instrument", "Contribution by Instrument and Year",
-                    "Daily Returns by Instrument", "Round Trip Returns by Instrument", "Win Rate"):
+                    "Daily Returns by Instrument", "Trade Returns by Instrument", "Win Rate"):
         assert heading in section, heading
     assert "could not be computed" not in page
 
@@ -1032,16 +1032,16 @@ def test_the_page_is_four_parts_with_contents_and_a_summary(pyfolio, tmp_path):
     links = set(re.findall(r'href="#([^"]+)"', page))
     assert links <= ids, f"every link lands somewhere: {links - ids}"
     summary = page.split('id="summary"')[1].split("</section>")[0]
-    cards = re.findall(r'<div class="card (\w+)">', summary)
-    assert len(cards) == 4, "one card per part"
-    assert summary.count("<tr ") >= 6, "the sections say what they found"
-    assert 'href="#trading-costs"' in summary and 'href="#round-trips"' in summary
-    severity = {"bad": 0, "warn": 1, "info": 2, "ok": 3}
-    for card in summary.split('<div class="card ')[1:]:
-        dots = re.findall(r'class="dot (\w+)"', card.split('<div class="card-foot">')[0])
-        if dots:
-            assert card.startswith(min(dots, key=severity.get)), "a card is the colour of its worst finding"
-    assert "id=\"contents\"" not in page, "the cards are the contents"
+    assert "Checks Passed" in summary
+    rows = re.findall(r'<span class="badge (\w+)">', summary)
+    assert len(rows) >= 5, "the sections say what they found"
+    passed = re.search(r'<div class="n">(\d+)/(\d+)</div>', summary)
+    assert (int(passed.group(1)), int(passed.group(2))) == (rows.count("ok"), len(rows)), "the score counts the rows"
+    assert 'href="#trading-costs"' in summary and 'href="#closed-trades"' in summary
+    assert "For context:" in summary, "facts that are not verdicts go on one line"
+    trades = page.split('id="closed-trades"')[1].split("</section>")[0]
+    assert "What Counts as a Trade" in trades and "two trades" in trades, "a round trip is explained, with examples"
+    assert "round_trips" not in trades and "Round Trip" not in trades, "pyfolio's jargon is not shown"
 
 
 def test_a_failed_section_says_nothing_in_the_summary(pyfolio):
@@ -1053,6 +1053,7 @@ def test_a_failed_section_says_nothing_in_the_summary(pyfolio):
     fine.finding(BAD, "Costs ate it", "90%")
     html = summary_html(ordered([broken, fine]))
     assert "Costs ate it" in html and "should not show" not in html
+    assert "Checks Passed" in html and ">0/1<" in html
 
 
 # ----------------------------------------------------------------------------
@@ -1225,3 +1226,42 @@ def test_a_long_only_book_has_no_long_short_section(pyfolio):
     txns = pd.DataFrame({"amount": [1, -1], "price": 100.0, "symbol": "A"},
                         index=pd.DatetimeIndex([days[0], days[3]]))
     assert build_long_short(pd.Series(0.0, index=days), holdings, txns) is None
+
+
+def test_a_trade_is_each_sale_with_the_shares_it_closes_and_its_return_is_on_their_cost(pyfolio):
+    """Buy 100 at 10, sell 30 at 12, sell 70 at 9: two trades, as the page explains."""
+    from zipfolio.sections.round_trips import extract_round_trips
+
+    days = pd.date_range("2024-03-01", periods=4, tz="UTC")
+    txns = pd.DataFrame({"amount": [100, -30, -70], "price": [10.0, 12.0, 9.0], "symbol": "A"},
+                        index=pd.DatetimeIndex([days[0], days[1], days[3]]))
+    positions = pd.DataFrame({"A": [1000.0, 840.0, 700.0, 0.0], "cash": [9000.0, 9360.0, 9360.0, 9990.0]},
+                             index=days)
+    returns = positions.sum(axis="columns").pct_change().fillna(0.0)
+
+    trades = extract_round_trips(returns, positions, txns).sort_values("close_dt")
+
+    assert trades["pnl"].tolist() == pytest.approx([60.0, -70.0])
+    assert trades["rt_returns"].tolist() == pytest.approx([0.2, -0.1]), "PnL over what the shares cost"
+
+
+def test_every_finding_branch_has_its_status_names(pyfolio):
+    """Both sides of a long-short book winning, and a spread-out instrument book: the OK branches."""
+    from zipfolio.page import OK
+    from zipfolio.sections.instruments import _concentration_finding
+    from zipfolio.sections.long_short import build_long_short
+    from zipfolio.page import Section
+
+    days = pd.date_range("2024-03-01", periods=5, tz="UTC")
+    holdings = pd.DataFrame({"A": [100.0, 110.0, 120.0, 130.0, 0.0], "B": [-100.0, -90.0, -80.0, -70.0, 0.0],
+                             "cash": 1000.0}, index=days)
+    txns = pd.DataFrame({"amount": [1, -1, -1, 1], "price": [100.0, 100.0, 130.0, 70.0], "symbol": ["A", "B", "A", "B"]},
+                        index=pd.DatetimeIndex([days[0], days[0], days[4], days[4]]))
+    section = build_long_short(pd.Series(0.0, index=days), holdings, txns)
+    assert section.findings[0].status == OK and section.findings[0].note == "Both sides made money."
+
+    section = Section("Instruments")
+    summary = pd.DataFrame({"Net PnL": [40.0, 35.0, 30.0, 25.0], "Days Held": [5, 5, 5, 5]},
+                           index=["A", "B", "C", "D"])
+    _concentration_finding(section, summary)
+    assert section.findings[0].status == OK

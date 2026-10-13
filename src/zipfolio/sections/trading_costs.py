@@ -93,7 +93,7 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
               f"{net_annual:.1%} after.")
     if gross_profit > 0:
         share = total_costs / gross_profit
-        status = BAD if net_profit < 0 else WARN if share >= 0.3 else OK if share < 0.1 else INFO
+        status = BAD if net_profit < 0 or share >= 0.5 else WARN if share >= 0.25 else OK
         note = "Trading costs turned a gross profit into a loss. " if net_profit < 0 else ""
         section.finding(status, "Costs' share of gross profit", f"{share:.0%}", note + detail)
     elif total_costs > 0:

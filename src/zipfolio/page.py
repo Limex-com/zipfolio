@@ -36,7 +36,7 @@ GROUPS: list[tuple[str, list[str]]] = [
         "Performance", "Profit Concentration", "Instruments", "Long and Short", "Sector Analysis",
         "Factor Analysis"]),
     ("What It Risked", ["Drawdowns", "Market Regimes", "Portfolio Risk", "Risk Over Time"]),
-    ("How It Holds and Trades", ["Positions", "Transactions", "Round Trips"]),
+    ("How It Holds and Trades", ["Positions", "Transactions", "Closed Trades"]),
     ("Can It Be Traded", ["Next-Bar Fills", "Execution", "Trading Costs", "Capacity"]),
 ]
 
@@ -123,46 +123,58 @@ def _jump_bar_html(groups, has_summary: bool) -> str:
     return f'<nav class="jump">{"".join(links)}</nav>'
 
 
-#: How a card names its worst finding, and what the dots mean.
-VERDICTS = {BAD: "needs work", WARN: "needs a look", INFO: "for context", OK: "holds up"}
-LEGEND = {OK: "holds up", INFO: "for context", WARN: "needs a look", BAD: "wrong or misleading"}
+#: The verdict badges, after QuantStats Pro's health summary, and the tiles that count them.
+BADGES = {OK: "Holds up", WARN: "Needs a look", BAD: "Critical"}
+TILE_NOTES = {OK: "within a safe range", WARN: "check before trusting the result", BAD: "likely to mislead"}
 
 
 def summary_html(groups) -> str:
-    """One card per part of the page: its findings as measure, value and a coloured dot.
+    """The checks at a glance: a score, three counts, one table of verdicts, one line of context.
 
-    The card's colour is its worst finding, so a glance at the four says where
-    the problems are; each row links to its section, and its full sentence
-    is on hover. The cards double as the contents: each lists its sections.
+    Every rated finding (ok, warn, bad) is a row -- measure, value, verdict --
+    under its part of the page, linked to its section, its reasoning on hover.
+    Findings that only describe (``INFO``) are not verdicts; they go on one line
+    under the table.
     """
     order = {title: rank for rank, title in enumerate(title for _, titles in GROUPS for title in titles)}
-    cards = []
+    rated, context, rows = [], [], []
     for number, (name, members) in enumerate(groups):
         findings = [finding for section in members if not section.failed for finding in section.findings]
-        findings.sort(key=lambda f: (order.get(f.section, 99), SEVERITY.get(f.status, 9)))
-        worst = min((f.status for f in findings), key=lambda status: SEVERITY[status], default=INFO)
-        flagged = sum(f.status in (BAD, WARN) for f in findings)
-        verdict = f"{flagged} to check" if flagged else VERDICTS[worst]
-        rows = "".join(
-            f'<tr title="{html.escape(f.note)}"><td class="d"><span class="dot {f.status}"></span></td>'
-            f'<td><a href="#{anchor(f.section)}">{html.escape(f.label)}</a></td>'
-            f'<td class="v">{html.escape(f.value)}</td></tr>'
-            for f in findings)
-        table = f'<table class="score">{rows}</table>' if rows else ""
-        links = " &middot; ".join(f'<a href="#{section.anchor}">{html.escape(section.title)}</a>'
-                                  for section in members)
-        cards.append(
-            f'<div class="card {worst}"><a class="card-head" href="#part-{number + 1}">'
-            f'<span class="num">{_numeral(number)}</span><span class="card-name">{html.escape(name or "More")}</span>'
-            f'<span class="verdict {BAD if worst == BAD else WARN if flagged else worst}">{verdict}</span></a>'
-            f'{table}<div class="card-foot">{links}</div></div>')
-    if not any("<table" in card for card in cards):
+        findings.sort(key=lambda f: order.get(f.section, 99))
+        verdicts = [f for f in findings if f.status in BADGES]
+        context += [f for f in findings if f.status not in BADGES]
+        rated += verdicts
+        if verdicts:
+            rows.append(f'<tr class="grp"><td colspan="3"><a href="#part-{number + 1}">{_numeral(number)} &middot; '
+                        f'{html.escape(name or "More")}</a></td></tr>')
+        rows += [
+            f'<tr title="{html.escape(f.note)}"><td><a href="#{anchor(f.section)}">{html.escape(f.label)}</a></td>'
+            f'<td class="v">{html.escape(f.value)}</td>'
+            f'<td class="b"><span class="badge {f.status}">{BADGES[f.status]}</span></td></tr>'
+            for f in verdicts]
+    if not rated and not context:
         return ""
-    legend = "".join(f'<span><span class="dot {status}"></span>{text}</span>' for status, text in LEGEND.items())
+
+    counts = {status: sum(f.status == status for f in rated) for status in BADGES}
+    tiles = []
+    if rated:
+        share = counts[OK] / len(rated)
+        tone = OK if share >= 0.75 else WARN if share >= 0.5 else BAD
+        tiles.append(f'<div class="tile {tone}"><div class="k">Checks Passed</div>'
+                     f'<div class="n">{counts[OK]}/{len(rated)}</div><div class="s">{share:.0%} hold up</div></div>')
+        tiles += [f'<div class="tile {status}"><div class="k">{BADGES[status]}</div><div class="n">{counts[status]}</div>'
+                  f'<div class="s">{TILE_NOTES[status]}</div></div>' for status in BADGES]
+    table = ('<table class="checks"><thead><tr><th>Check</th><th>Value</th><th>Verdict</th></tr></thead>'
+             f'<tbody>{"".join(rows)}</tbody></table>') if rows else ""
+    facts = " &middot; ".join(
+        f'<a href="#{anchor(f.section)}" title="{html.escape(f.note)}">{html.escape(f.label)} '
+        f'<b>{html.escape(f.value)}</b></a>' for f in context)
     return ('<section id="summary" class="summary"><h2>Summary</h2>'
-            f'<div class="cards">{"".join(cards)}</div>'
-            f'<p class="legend">{legend}<span>Hover a row for the reasoning; click it for the numbers.</span></p>'
-            '</section>')
+            '<p class="caption lead">Each check is held against a fixed threshold. Hover a row for the reasoning; '
+            'click it for the numbers.</p>'
+            f'<div class="tiles">{"".join(tiles)}</div>{table}'
+            + (f'<p class="context"><span>For context:</span> {facts}</p>' if facts else "")
+            + '</section>')
 
 
 def _section_html(section: Section) -> str:
@@ -256,36 +268,31 @@ def page_html(title: str, returns: pd.Series, benchmark, analytics: str, section
   .jump a {{ color: #333; font-weight: 700; font-size: 12px; }}
   .num {{ display: inline-block; min-width: 18px; color: #6B9E00; font-weight: 700; }}
   .summary {{ margin-top: 22px; }}
-  .cards {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
-  .card {{ border: 1px solid #e3e3e3; border-top: 4px solid #8A8A8A; border-radius: 6px;
-          padding: 12px 14px 10px; min-width: 0; }}
-  .card.ok {{ border-top-color: #6B9E00; }}
-  .card.warn {{ border-top-color: #D9A400; }}
-  .card.bad {{ border-top-color: #BA516B; }}
-  .card-head {{ display: flex; align-items: baseline; gap: 6px; color: #000; font-weight: 700;
-               font-size: 14px; margin: 0 0 8px; }}
-  .card-head:hover {{ color: #000; text-decoration: none; }}
-  .card-name {{ flex: 1 1 auto; }}
-  .verdict {{ font-size: 11px; padding: 2px 8px; border-radius: 10px; color: #fff; white-space: nowrap;
-             background: #8A8A8A; }}
-  .verdict.ok {{ background: #6B9E00; }}
-  .verdict.warn {{ background: #D9A400; }}
-  .verdict.bad {{ background: #BA516B; }}
-  table.score {{ margin: 0 0 8px; }}
-  table.score td {{ padding: 5px 4px; border-bottom: 1px solid #f0f0f0; text-align: left; vertical-align: top; }}
-  table.score td.d {{ width: 12px; padding-right: 2px; }}
-  table.score td.v {{ text-align: right; font-weight: 700; }}
-  table.score a {{ color: #222; }}
-  table.score tr:hover td {{ background: #fafafa; }}
-  .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #8A8A8A;
-         margin: 4px 6px 0 0; }}
-  .dot.ok {{ background: #6B9E00; }}
-  .dot.warn {{ background: #D9A400; }}
-  .dot.bad {{ background: #BA516B; }}
-  .card-foot {{ font-size: 11px; color: grey; line-height: 1.6; }}
-  .card-foot a {{ color: #888; }}
-  .legend {{ color: grey; font-size: 12px; margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }}
-  .legend .dot {{ margin-top: 0; vertical-align: -1px; }}
+  .lead {{ margin: -8px 0 16px; }}
+  .tiles {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 0 0 18px; }}
+  .tile {{ border: 1px solid #e3e3e3; border-left: 4px solid #8A8A8A; border-radius: 6px; padding: 10px 12px; }}
+  .tile .k {{ font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #555; }}
+  .tile .n {{ font-size: 26px; font-weight: 700; margin: 2px 0; }}
+  .tile .s {{ font-size: 11px; color: grey; }}
+  .tile.ok {{ border-left-color: #6B9E00; }} .tile.ok .n {{ color: #4f7a00; }}
+  .tile.warn {{ border-left-color: #D9A400; }} .tile.warn .n {{ color: #b07f00; }}
+  .tile.bad {{ border-left-color: #BA516B; }} .tile.bad .n {{ color: #BA516B; }}
+  table.checks {{ margin: 0 0 10px; }}
+  table.checks td {{ padding: 6px 5px; border-bottom: 1px solid #eee; }}
+  table.checks td.v {{ font-weight: 700; }}
+  table.checks td.b {{ width: 1%; white-space: nowrap; }}
+  table.checks td a {{ color: #222; }}
+  table.checks tr.grp td {{ background: #f5f5f5; font-weight: 700; font-size: 12px; padding: 5px; }}
+  table.checks tr.grp a {{ color: #333; }}
+  table.checks tbody tr:not(.grp):hover td {{ background: #fafafa; }}
+  .badge {{ display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+           text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }}
+  .badge.ok {{ background: #eaf3dc; color: #4f7a00; }}
+  .badge.warn {{ background: #fdf1d6; color: #a87700; }}
+  .badge.bad {{ background: #f6dfe5; color: #a3405a; }}
+  .context {{ color: #555; font-size: 12px; line-height: 1.8; margin: 8px 0 0; }}
+  .context span {{ color: grey; }}
+  .context a {{ color: #555; white-space: nowrap; }}
   .part {{ display: flex; align-items: baseline; gap: 8px; margin: 46px 0 22px; padding: 0 0 8px;
           border-bottom: 3px solid #2d2d2d; scroll-margin-top: 48px; }}
   .part .num {{ font-size: 22px; min-width: 30px; }}
@@ -296,7 +303,7 @@ def page_html(title: str, returns: pd.Series, benchmark, analytics: str, section
     body {{ margin: 16px; }}
     .row {{ flex-direction: column; }}
     .left, .right {{ flex: 1 1 auto; width: 100%; }}
-    .cards {{ grid-template-columns: 1fr; }}
+    .tiles {{ grid-template-columns: 1fr 1fr; }}
   }}
   @media (max-width: 560px) {{
     .part .num, .part-name {{ font-size: 18px; }}

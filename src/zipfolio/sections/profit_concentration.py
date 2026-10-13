@@ -2,8 +2,8 @@
 
 A backtest's total is one number, and one number hides whether it was earned
 steadily or in a handful of lucky sessions. This section takes the best days
-and the best round trips away and looks at what remains, and resamples the
-round trips to see how often the same trades, in another draw, lose money.
+and the best closed trades away and looks at what remains, and redraws the
+trades at random to see how often the same trades, in another draw, lose money.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from ..currency import money, unit
-from ..page import BAD, INFO, OK, WARN, Section
+from ..page import BAD, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
 from ..tables import Table
 from .round_trips import extract_round_trips
@@ -35,7 +35,7 @@ def without_best_days(returns: pd.Series, count: int) -> pd.Series:
 
 
 def bootstrap_totals(pnl: np.ndarray, samples: int = BOOTSTRAP_SAMPLES, seed: int = 0) -> np.ndarray:
-    """Net PnL of ``samples`` draws of as many round trips, with replacement, from ``pnl``.
+    """Net PnL of ``samples`` draws of as many trades, with replacement, from ``pnl``.
 
     Seeded, so the same backtest gets the same page. Drawn in blocks to keep a
     long trade list from asking for gigabytes at once.
@@ -102,7 +102,7 @@ def build_profit_concentration(returns, positions, transactions) -> Section | No
         try:
             trades = extract_round_trips(returns, positions, transactions)
         except Exception:
-            print(f"Warning: no round trips for the profit concentration:\n{traceback.format_exc()}")
+            print(f"Warning: no trades for the profit concentration:\n{traceback.format_exc()}")
     if trades is None or len(trades) < 5:
         return section
 
@@ -115,38 +115,41 @@ def build_profit_concentration(returns, positions, transactions) -> Section | No
     loss = float((totals <= 0).mean())
     low, middle, high = np.percentile(totals, [5, 50, 95])
     facts = {
-        "Round trips": f"{len(pnl):,}",
-        "Net PnL of round trips": money(total),
-        f"Best {BEST_TRADES} round trips": money(top),
-        "Best 10% of round trips": money(top_tenth),
+        "Closed trades": f"{len(pnl):,}",
+        "Their net PnL": money(total),
+        f"Best {BEST_TRADES} trades": money(top),
+        "Best 10% of trades": money(top_tenth),
     }
     if total > 0:
         facts[f"  best {BEST_TRADES}, share of net PnL"] = f"{top / total:.0%}"
         facts["  best 10%, share of net PnL"] = f"{top_tenth / total:.0%}"
     facts[f"Net PnL without the best {BEST_TRADES}"] = money(total - top)
-    facts["Bootstrap: 5th percentile"] = money(low)
-    facts["Bootstrap: median"] = money(middle)
-    facts["Bootstrap: 95th percentile"] = money(high)
-    facts["Bootstrap: chance of a net loss"] = f"{loss:.1%}"
-    section.table(Table(pd.Series(facts).to_frame("Value"), None), title="The Best Round Trips",
+    facts["Luck test: chance of a net loss"] = f"{loss:.1%}"
+    facts["Luck test: bad case (5th percentile)"] = money(low)
+    facts["Luck test: typical (median)"] = money(middle)
+    facts["Luck test: good case (95th percentile)"] = money(high)
+    section.table(Table(pd.Series(facts).to_frame("Value"), None), title="The Best Trades and the Luck Test",
                   first_header="Measure")
     section.side.append(
-        '<p class="explain">Round trips are positions from open to close, their PnL before commission. '
-        f'The <b>bootstrap</b> draws {len(pnl):,} of them again, at random and with replacement, '
-        f'{BOOTSTRAP_SAMPLES:,} times: the spread of those totals is how much of the result was the '
-        'luck of which trades came up. It treats trades as independent and leaves sizing as it was.</p>')
+        '<p class="explain">Trades are counted as in <a href="#closed-trades">Closed Trades</a>: each sale '
+        'with the shares it closed, PnL before commission.</p>'
+        f'<p class="explain"><b>The luck test</b> takes the {len(pnl):,} trades and draws {len(pnl):,} of '
+        'them again at random -- some twice, some not at all -- and adds them up; '
+        f'{BOOTSTRAP_SAMPLES:,} times. If many of those totals are losses, the result depended on which '
+        'trades happened to come up, not on an edge most of them share. It treats trades as independent '
+        'and keeps their sizes.</p>')
 
     if total > 0:
         def profit_curve(ax):
             share = np.arange(1, len(ranked) + 1) / len(ranked)
             ax.plot(share * 100, np.cumsum(ranked) / total, color=STRATEGY_COLOR, lw=1.6)
             ax.axhline(1.0, color="black", lw=0.8, ls="--")
-            ax.set_xlabel("Round trips, best first, %")
+            ax.set_xlabel("Trades, best first, %")
             ax.set_ylabel("Share of net PnL")
 
-        section.chart(chart("Net PnL by Round Trip, Best First", profit_curve, height=3.2, y="pct"))
+        section.chart(chart("Net PnL Added Up Trade by Trade, Best First", profit_curve, height=3.2, y="pct"))
         section.side.append(
-            '<p class="explain">The <b>net PnL by round trip</b> curve climbs through the winners and falls through the losers to '
+            '<p class="explain">The <b>trade-by-trade</b> curve climbs through the winners and falls through the losers to '
             '100%. The higher its peak, the more the losers took back from a few large wins.</p>')
 
     def bootstrap(ax):
@@ -156,19 +159,19 @@ def build_profit_concentration(returns, positions, transactions) -> Section | No
         from matplotlib.ticker import FuncFormatter
 
         ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:,.0f}"))
-        ax.set_xlabel(f"Net PnL of resampled round trips, {unit()}")
+        ax.set_xlabel(f"Net PnL of the redrawn trades, {unit()}")
         ax.set_ylabel("Draws")
         ax.legend(loc="upper left")
 
-    section.chart(chart("Bootstrap of Round Trips", bootstrap, height=3.2))
+    section.chart(chart("Luck Test: 5,000 Redraws of the Same Trades", bootstrap, height=3.2))
 
     if total > 0:
         share = top / total
-        section.finding(WARN if share >= 0.5 else INFO, f"Best {BEST_TRADES} round trips' share of PnL",
-                        f"{share:.0%}",
-                        f"{len(pnl):,} round trips in all; without the best {BEST_TRADES}, {money(total - top)}.")
+        section.finding(WARN if share >= 0.5 else OK, f"Profit from the best {BEST_TRADES} trades", f"{share:.0%}",
+                        f"{len(pnl):,} closed trades in all; without the best {BEST_TRADES}, {money(total - top)}. "
+                        "Over 100% means the rest lost money together.")
     status = BAD if loss >= BAD_LOSS else WARN if loss >= WARN_LOSS else OK
-    section.finding(status, "Chance of a loss, bootstrap", f"{loss:.0%}",
-                    f"Resampling the round trips, the net PnL ends below zero {loss:.0%} of the time; 5th to 95th "
-                    f"percentile {money(low, 0)} to {money(high, 0)}.")
+    section.finding(status, "Luck test: chance of a loss", f"{loss:.0%}",
+                    f"Redrawing the same trades at random, the total is a loss {loss:.0%} of the time; a bad "
+                    f"case (5th percentile) {money(low, 0)}, a good one {money(high, 0)}.")
     return section

@@ -9,7 +9,7 @@ import pandas as pd
 
 from ..currency import money, money_formatter, unit
 from ..inputs import utc_dates
-from ..page import INFO, WARN, Section
+from ..page import INFO, OK, WARN, Section
 from ..style import LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
 from ..tables import Table
 from .round_trips import extract_round_trips
@@ -59,7 +59,7 @@ def _concentration_finding(section: Section, summary: pd.DataFrame) -> None:
     if total > 0:
         top = traded["Net PnL"].nlargest(2)
         share = float(top.sum()) / total
-        section.finding(WARN if share >= 0.75 else INFO, "Top 2 names' share of PnL",
+        section.finding(WARN if share >= 0.75 else OK, "Profit from the top 2 names",
                         f"{share:.0%} ({top.index[0]}, {top.index[1]})",
                         f"{top.index[0]} and {top.index[1]} made {share:.0%} of the net PnL; "
                         f"{len(traded):,} instruments held in all. Over 100% means the rest lost money.")
@@ -94,7 +94,7 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
     try:
         trades = extract_round_trips(returns, positions, transactions)
     except Exception:
-        print(f"Warning: no round trips for the instrument table:\n{traceback.format_exc()}")
+        print(f"Warning: no trades for the instrument table:\n{traceback.format_exc()}")
 
     total_pnl = pnl.sum()
     summary = pd.DataFrame({
@@ -106,7 +106,7 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
         "Commission": commission.sum(),
     })
     if trades is not None and len(trades):
-        by_symbol = trades.groupby(trades["symbol"].astype(str))["returns"]
+        by_symbol = trades.groupby(trades["symbol"].astype(str))["rt_returns"]
         summary["Trades"] = by_symbol.size()
         summary["Win Rate"] = by_symbol.apply(lambda r: (r > 0).mean())
         summary["Avg. Trade"] = by_symbol.mean()
@@ -135,8 +135,9 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
         'was small is a larger share of it than a dollar earned after it grew: a name that made '
         'money early and gave back a similar amount later shows a positive contribution and a '
         'small or negative PnL, and the reverse.</p>'
-        '<p class="explain">The trade columns are from round trips -- a position from open to '
-        'close -- and their returns are on the capital the position took.</p>')
+        '<p class="explain">The trade columns count closed trades, as in <a href="#closed-trades">Closed '
+        'Trades</a> -- each sale with the shares it closed -- and a trade\'s return is its PnL over what '
+        'those shares cost.</p>')
 
     ranked = summary["Contribution"].reindex(
         summary["Contribution"].abs().sort_values(ascending=False).index).head(CHART_INSTRUMENTS)
@@ -190,11 +191,11 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
         height=max(2.6, 0.32 * len(order) + 1.2)))
 
     if trades is not None and len(trades):
-        grouped = {str(symbol): group["returns"].dropna().to_numpy()
+        grouped = {str(symbol): group["rt_returns"].dropna().to_numpy()
                    for symbol, group in trades.groupby(trades["symbol"].astype(str))}
         order = [symbol for symbol in ranked.index if symbol in grouped]
         order = sorted(order, key=lambda symbol: np.median(grouped[symbol]) if len(grouped[symbol]) else 0.0)
-        section.chart(chart("Round Trip Returns by Instrument", lambda ax: _boxes(
+        section.chart(chart("Trade Returns by Instrument", lambda ax: _boxes(
             ax, [grouped[symbol] for symbol in order], order, points=True),
             height=max(2.6, 0.32 * len(order) + 1.2)))
     return section

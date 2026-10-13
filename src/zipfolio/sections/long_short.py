@@ -12,7 +12,7 @@ import pandas as pd
 
 from ..currency import compact, money, money_formatter, unit
 from ..inputs import utc_dates
-from ..page import INFO, WARN, Section
+from ..page import OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table
 from .instruments import commission_by_day, instrument_pnl
@@ -132,8 +132,8 @@ def build_long_short(returns, holdings, transactions, orders=None) -> Section | 
     if winner > 0 > loser:
         note = (f"The {names[0]} side lost {money(-loser, 0)}, giving back {-loser / winner:.0%} of what the "
                 f"{names[1]} side made ({money(winner, 0)}).")
-        section.finding(WARN if -loser >= GIVE_BACK * winner else INFO, "Long / short PnL", value, note)
+        section.finding(WARN if -loser >= GIVE_BACK * winner else OK, "Long / short PnL", value, note)
     else:
-        section.finding(INFO, "Long / short PnL", value,
+        section.finding(OK if loser >= 0 else WARN, "Long / short PnL", value,
                         "Both sides made money." if loser >= 0 else "Both sides lost money.")
     return section

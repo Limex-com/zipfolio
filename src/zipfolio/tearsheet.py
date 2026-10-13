@@ -74,7 +74,7 @@ def build_tearsheet(
       trips, their share of the net PnL in the best few, and a bootstrap;
     * **Instruments** -- when the strategy traded: each name's PnL and
       contribution, read mark-to-market from the book and the fills, and the
-      spread of its daily and round-trip returns;
+      spread of its daily and trade returns;
     * **Long and Short** -- when the book went short: what each side earned;
     * **Sector Analysis** -- when ``sector_mappings`` classifies a held name;
     * **Factor Analysis** -- when ``factor_model`` names one: ``"ff5_mom"`` (the
@@ -98,8 +98,8 @@ def build_tearsheet(
     * **Risk Over Time** -- when the strategy traded: predicted against
       realized volatility, each name's share of risk, concentration;
 
-    **How it holds and trades** -- **Positions**, **Transactions**, **Round
-    Trips**, when the strategy traded;
+    **How it holds and trades** -- **Positions**, **Transactions**, **Closed
+    Trades** (pyfolio's round trips: one per closing sale), when the strategy traded;
 
     **Can it be traded**
 
@@ -185,7 +185,7 @@ def build_tearsheet(
             ("Next-Bar Fills", lambda: build_next_bar_fills(returns, holdings, raw_fills, fill_bars, cost_settings)),
             ("Execution", lambda: build_execution(raw_fills, orders, fill_bars, decision_prices, cost_settings)),
             ("Trading Costs", lambda: build_trading_costs(returns, positions, transactions, orders, cost_settings)),
-            ("Round Trips", lambda: build_round_trips(returns, positions, transactions)),
+            ("Closed Trades", lambda: build_round_trips(returns, positions, transactions)),
         ]
         if bars is not None:
             builders.append(("Capacity", lambda: build_capacity(returns, positions, transactions, bars)))

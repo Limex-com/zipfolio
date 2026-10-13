@@ -1,16 +1,51 @@
-"""Round trips: every position from open to close."""
+"""Closed trades -- pyfolio's round trips -- in words a reader can follow.
+
+pyfolio counts a "round trip" for every sale that closes shares bought
+earlier, matched oldest first, not one per position; a strategy that trims
+at each rebalance shows several per holding. The section says so up front,
+with examples, and calls them trades.
+"""
 
 from __future__ import annotations
 
 import pandas as pd
 
 from ..currency import money, unit
-from ..page import INFO, WARN, Section
+from ..page import OK, WARN, Section
 from ..style import LOSS_COLOR, STRATEGY_COLOR, chart
 from ..tables import Table, captured_tables, present
 
+#: What a trade is, for the page: the matching rule pyfolio applies, with examples.
+TRADE_EXPLAINED = (
+    "<h3>What Counts as a Trade</h3>"
+    '<p class="explain">A <b>trade</b> is shares bought and later sold -- or sold short and later '
+    "bought back -- and what they earned in between. Every sale closes the shares bought earliest "
+    "first, and every sale is a trade of its own:</p>"
+    '<ul class="explain">'
+    "<li>buy 100, later sell 100: <b>one trade</b>;</li>"
+    "<li>buy 100; sell 30 at the next rebalance and the other 70 a month later: <b>two trades</b>, "
+    "of 30 and of 70 shares, each held from the purchase to its own sale;</li>"
+    "<li>buy 100, buy 50 more, sell all 150: <b>one trade</b>, at the average of the two purchases.</li>"
+    "</ul>"
+    '<p class="explain">So a strategy that trims its holdings at every rebalance shows many more trades '
+    "than positions. Fills on the same side within 8 hours count as one; what is still held at the end "
+    "is counted as sold at the last price. <b>PnL</b> is before commission; a trade's <b>return</b> is "
+    "its PnL over what its shares cost.</p>"
+)
+
+#: pyfolio's table and row names, said plainly.
+TABLE_TITLES = {"Summary stats": "How Many Trades", "PnL stats": "Profit and Loss per Trade",
+                "Duration stats": "How Long Trades Were Held", "Return stats": "Return per Trade"}
+COLUMN_NAMES = {"All trades": "All", "Long trades": "Long", "Short trades": "Short"}
+
 
 def extract_round_trips(returns, positions, transactions) -> pd.DataFrame:
+    """pyfolio's round trips: one row per closing sale (or buy-back), see ``TRADE_EXPLAINED``.
+
+    ``returns`` in the frame is pyfolio's -- PnL over the whole portfolio's value;
+    ``rt_returns`` is PnL over what the trade's shares cost, which is what this
+    report calls a trade's return.
+    """
     from pyfolio import round_trips
 
     closed = round_trips.add_closing_transactions(positions, transactions)
@@ -25,45 +60,51 @@ def build_round_trips(returns, positions, transactions) -> Section | None:
 
     trades = extract_round_trips(returns, positions, transactions)
     if len(trades) < 5:
-        # pyfolio's own threshold: fewer round trips than this say nothing.
+        # pyfolio's own threshold: fewer trades than this say nothing.
         return None
 
-    section = Section("Round Trips")
+    section = Section("Closed Trades")
+    section.side.append(TRADE_EXPLAINED)
+    # pyfolio's return tables read ``returns``; a trade's return is on its own cost.
+    on_cost = trades.assign(returns=trades["rt_returns"])
     with captured_tables() as tables:
-        round_trips.print_round_trip_stats(trades)
+        round_trips.print_round_trip_stats(on_cost)
         plotting.show_profit_attribution(trades)
     for table in tables:
         if "Profitability" in (table.name or ""):
-            section.table(table, title="Profit Attribution by Symbol", first_header="Symbol",
+            section.table(table, title="Share of Profit by Symbol", first_header="Symbol",
                           rename={"pnl": "Share of PnL"})
         else:
-            section.table(_tidy_round_trip_table(table), first_header="Statistic")
+            section.table(_tidy_round_trip_table(table), title=TABLE_TITLES.get(table.name),
+                          first_header="", rename=COLUMN_NAMES)
 
-    section.chart(chart("Round Trip Lifetimes", lambda ax: plotting.plot_round_trip_lifetimes(
+    section.chart(chart("When Each Trade Was Open", lambda ax: plotting.plot_round_trip_lifetimes(
         trades, ax=ax), height=max(3.0, 0.32 * min(trades["symbol"].nunique(), 16) + 1.4),
         recolor={"#0000ff": STRATEGY_COLOR, "#ff0000": LOSS_COLOR}))
-    section.chart(chart("Probability of Making a Profitable Decision",
+    section.chart(chart("How Likely a Trade Is to Make Money",
                         lambda ax: plotting.plot_prob_profit_trade(trades, ax=ax),
                          recolor={"#0000ff": STRATEGY_COLOR, "#1f77b4": STRATEGY_COLOR}))
 
     def histogram(values, xlabel):
         def draw(ax):
             sns.histplot(values, ax=ax, color=STRATEGY_COLOR)
-            ax.set(xlabel=xlabel)
+            ax.set(xlabel=xlabel, ylabel="Trades")
         return draw
 
     section.chart(chart("Holding Time", histogram([x.days for x in trades["duration"]], "Days")))
-    section.chart(chart("PnL per Round Trip", histogram(trades["pnl"], f"PnL, {unit()}")))
-    section.chart(chart("Round Trip Returns", histogram(trades["returns"].dropna() * 100, "Return, %")))
+    section.chart(chart("PnL per Trade", histogram(trades["pnl"], f"PnL, {unit()}")))
+    section.chart(chart("Return per Trade", histogram(trades["rt_returns"].dropna() * 100,
+                                                      "Return on what the shares cost, %")))
 
     pnl = trades["pnl"].astype(float)
     wins, losses = pnl[pnl > 0].sum(), -pnl[pnl < 0].sum()
     factor = wins / losses if losses else float("inf")
-    shown = f"{factor:.2f}" if losses else "no losing trades"
-    section.finding(WARN if factor < 1 else INFO, "Win rate · profit factor",
+    shown = f"{factor:.2f}" if losses else "no losers"
+    section.finding(WARN if factor < 1 else OK, "Winning trades · profit factor",
                     f"{(pnl > 0).mean():.0%} · {shown}",
-                    f"{len(pnl):,} round trips; median holding time {trades['duration'].median().days} days. "
-                    "The profit factor is the winners' PnL over the losers'.")
+                    f"{len(pnl):,} closed trades; median holding time {trades['duration'].median().days} days. "
+                    "The profit factor is what the winning trades made over what the losing ones lost: "
+                    "under 1, the trades lose money on balance.")
     return section
 
 
@@ -76,12 +117,15 @@ def _tidy_round_trip_table(table: "Table") -> "Table":
     dollars whatever the currency.
     """
     frame = table.frame.astype(object)
+    frame.index = [_plain(row) for row in frame.index]
     for row in frame.index:
         label = str(row).lower()
         if "percent" in label:
             frame.loc[row] = frame.loc[row].map(lambda v: f"{v:.0%}" if present(v) else v)
-        elif "number" in label or label.startswith(("winning", "losing", "even")):
+        elif "number" in label or label.startswith(("winning", "losing", "even", "trades")):
             frame.loc[row] = frame.loc[row].map(lambda v: f"{int(v):,}" if present(v) else v)
+        elif table.name == "Return stats":
+            frame.loc[row] = frame.loc[row].map(lambda v: f"{v / 100:.2%}" if present(v) else v)
         elif table.name == "PnL stats":
             if "factor" in label or "ratio" in label:
                 frame.loc[row] = frame.loc[row].map(lambda v: f"{v:.2f}" if present(v) else v)
@@ -89,3 +133,14 @@ def _tidy_round_trip_table(table: "Table") -> "Table":
                 frame.loc[row] = frame.loc[row].map(
                     lambda v: money(v) if present(v) else v)
     return Table(frame, table.name, table.float_format, table.formatters, table.header_rows)
+
+
+def _plain(row) -> str:
+    """pyfolio's row names without its ``round_trips``: "Total number of round_trips" -> "Trades"."""
+    text = str(row)
+    replacements = {"Total number of round_trips": "Trades", "Percent profitable": "Percent profitable",
+                    "Avg returns all round_trips": "Average, all trades",
+                    "Median returns all round_trips": "Median, all trades",
+                    "Avg returns winning": "Average, winners", "Avg returns losing": "Average, losers",
+                    "Median returns winning": "Median, winners", "Median returns losing": "Median, losers"}
+    return replacements.get(text, text.replace("round_trips", "trades"))
