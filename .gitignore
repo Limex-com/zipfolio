@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.venv/
+*.html
+# GICS codes are licensed data: never commit a sector table.
+src/zipfolio/data/
+us_gics_sectors.csv

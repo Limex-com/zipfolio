@@ -1,0 +1,62 @@
+[project]
+name = "zipfolio"
+version = "0.1.0"
+description = "Backtest tearsheets that read the book, not just the returns: positions, instruments, sectors, factors, execution realism and trading costs. Part of the ZipLime ecosystem."
+authors = [{ name = "Ziplime" }]
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+keywords = ["backtesting", "tearsheet", "pyfolio", "ziplime", "portfolio-analytics", "execution", "fama-french"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1,<3",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "cycler>=0.11",
+    "empyrical-reloaded>=0.5.9",
+    "pyfolio-reloaded>=0.9.9",
+]
+
+[project.optional-dependencies]
+# The Portfolio Risk section: risk measures, risk contribution, walk-forward allocations.
+risk = ["skfolio>=0.15"]
+# zipfolio.ziplime: reading bars out of a ziplime market-data bundle.
+ziplime = ["polars>=1.0"]
+all = ["skfolio>=0.15", "polars>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/Limex-com/zipfolio"
+Repository = "https://github.com/Limex-com/zipfolio"
+Changelog = "https://github.com/Limex-com/zipfolio/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Limex-com/zipfolio/issues"
+
+[tool.poetry]
+packages = [{ include = "zipfolio", from = "src" }]
+include = [
+    { path = "CHANGELOG.md", format = "sdist" },
+    { path = "tests", format = "sdist" },
+    { path = "scripts", format = "sdist" },
+]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8"
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 110
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
