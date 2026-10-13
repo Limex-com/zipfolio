@@ -19,12 +19,15 @@ from .inputs import (
 )
 from .page import DEFAULT_TITLE, Section, page_html
 from .sections.capacity import build_capacity
+from .sections.drawdowns import build_drawdowns
 from .sections.execution import build_execution
 from .sections.factor_analysis import build_factor_analysis, build_market_model_analysis
 from .sections.instruments import build_instruments
+from .sections.market_regimes import build_market_regimes
 from .sections.performance import build_performance
 from .sections.portfolio_risk import build_portfolio_risk
 from .sections.positions import build_positions
+from .sections.risk_over_time import build_risk_over_time
 from .sections.round_trips import build_round_trips
 from .sections.sector_analysis import build_sector_analysis
 from .sections.trading_costs import build_trading_costs
@@ -60,7 +63,14 @@ def build_tearsheet(
     * **Performance** -- key metrics, cumulative returns, the top drawdowns and
       the underwater curve, always. Deliberately short: the QuantStats tearsheet
       beside this one covers returns in depth;
+    * **Market Regimes** -- when there is a benchmark: up and down capture,
+      beta on up and down days, the average month in rising, falling, calm
+      and volatile markets;
     * **Positions**, **Transactions**, **Round Trips** -- when the strategy traded;
+    * **Drawdowns** -- when the strategy traded: each of the worst drawdowns
+      split, exactly, across the names (and sectors) that made it;
+    * **Risk Over Time** -- when the strategy traded: predicted against
+      realized volatility, each name's share of risk, concentration;
     * **Instruments** -- when the strategy traded: each name's PnL and
       contribution, read mark-to-market from the book and the fills, and the
       spread of its daily and round-trip returns;
@@ -126,13 +136,15 @@ def build_tearsheet(
 
     builders: list[tuple[str, Callable[[], Section | None]]] = [
         ("Performance", lambda: build_performance(returns, benchmark, positions, transactions)),
+        ("Market Regimes", lambda: build_market_regimes(returns, benchmark)),
     ]
+    sectors = sectors_of(positions, sector_mappings) if positions is not None else {}
     if positions is not None:
         builders += [
             ("Positions", lambda: build_positions(returns, positions)),
             ("Instruments", lambda: build_instruments(returns, holdings, positions, transactions, orders)),
+            ("Drawdowns", lambda: build_drawdowns(returns, holdings, transactions, orders, sectors or None)),
         ]
-        sectors = sectors_of(positions, sector_mappings)
         if sectors:
             builders.append(("Sector Analysis", lambda: build_sector_analysis(
                 returns, positions, transactions, sectors)))
@@ -143,6 +155,7 @@ def build_tearsheet(
     builders.append(("Portfolio Risk", lambda: build_portfolio_risk(returns, benchmark, positions, bars)))
     if positions is not None:
         builders += [
+            ("Risk Over Time", lambda: build_risk_over_time(returns, holdings, bars)),
             ("Transactions", lambda: build_transactions(returns, positions, transactions, market_timezone)),
             ("Execution", lambda: build_execution(raw_fills, orders, fill_bars, decision_prices, cost_settings)),
             ("Trading Costs", lambda: build_trading_costs(returns, positions, transactions, orders, cost_settings)),

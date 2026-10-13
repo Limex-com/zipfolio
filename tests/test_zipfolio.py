@@ -207,8 +207,8 @@ def test_a_traded_backtest_gets_every_section(pyfolio, tmp_path):
     built = build_tearsheet(output, returns, benchmark, records, cash, fills)
 
     assert [name for name in built if name != "Portfolio Risk"] == [
-        "Performance", "Positions", "Instruments", "Factor Analysis", "Transactions", "Trading Costs",
-        "Round Trips"]
+        "Performance", "Market Regimes", "Positions", "Instruments", "Drawdowns", "Factor Analysis",
+        "Risk Over Time", "Transactions", "Trading Costs", "Round Trips"]
     page = output.read_text(encoding="utf-8")
     assert "Key Performance Metrics" in page and "Annual return" in page, (
         "the perf stats table was caught at print_table and rendered in the page's own style")
@@ -247,7 +247,7 @@ def test_performance_is_only_what_quantstats_does_not_already_show(pyfolio, tmp_
     performance = page.split("<h2>Performance</h2>")[1].split("</section>")[0]
     assert performance.count("<svg") == 2, "cumulative returns and the underwater curve"
     assert "Key Performance Metrics" in performance
-    for repeated in ("Rolling Sharpe", "Rolling Volatility", "Rolling Beta", "Monthly Returns",
+    for repeated in ("Rolling Sharpe", "Rolling Volatility", "Rolling Beta", "Monthly Returns (%)",
                      "EOY Returns", "Return Quantiles", "Volatility Matched", "Log Scaled",
                      "Worst 5 Drawdowns", "Top 5 Drawdown Periods"):
         assert repeated not in page, repeated
@@ -934,3 +934,73 @@ def test_a_rouble_report(pyfolio, tmp_path):
     assert "Market model: IMOEX over RUONIA" in page
     assert "\u20bd" in page and "Traded value" in page
     assert "100m \u20bd capital base" in page
+
+
+# ----------------------------------------------------------------------------
+# Drawdowns, market regimes, risk over time.
+# ----------------------------------------------------------------------------
+
+def test_a_drawdown_is_split_exactly_across_the_names_that_made_it():
+    pytest.importorskip("pyfolio")
+    from zipfolio.sections.drawdowns import RESIDUAL, drawdown_attribution
+
+    closes = session_closes("2022-01-03", "2023-12-29")
+    returns, records, cash, fills = a_traded_book(closes)
+    dates = daily_returns(returns).index
+    holdings = positions_in_dollars(records, cash, dates)
+    book_returns = holdings.sum(axis="columns").pct_change().fillna(0.0)
+
+    drawdowns, shares = drawdown_attribution(book_returns, holdings, transactions_frame(fills))
+
+    assert len(drawdowns)
+    assert shares.sum(axis="columns").to_numpy() == pytest.approx(drawdowns["Depth"].to_numpy())
+    assert shares[RESIDUAL].abs().max() < 1e-9, "no dividends in this book: the names account for all of it"
+
+
+def test_capture_and_betas_of_half_the_market():
+    from zipfolio.sections.market_regimes import asymmetric_beta, capture, monthly_regimes
+
+    days = pd.bdate_range("2021-01-01", "2023-12-29", tz="UTC")
+    market = pd.Series(np.random.default_rng(12).normal(0.0004, 0.012, len(days)), index=days)
+    half = market * 0.5
+
+    monthly = monthly_regimes(half, market)
+
+    assert set(monthly["regime"]) <= {"Rising, calm", "Rising, volatile", "Falling, calm", "Falling, volatile"}
+    assert capture(monthly, True) == pytest.approx(0.5, abs=0.03)
+    assert capture(monthly, False) == pytest.approx(0.5, abs=0.03)
+    assert asymmetric_beta(half, market, True) == pytest.approx(0.5)
+    assert asymmetric_beta(half, market, False) == pytest.approx(0.5)
+
+
+def test_predicted_risk_is_the_weights_times_the_trailing_covariance():
+    from zipfolio.sections.risk_over_time import COVARIANCE_WINDOW, risk_path
+
+    days = pd.bdate_range("2023-01-02", periods=COVARIANCE_WINDOW + 5, tz="UTC")
+    rng = np.random.default_rng(4)
+    assets = pd.DataFrame(rng.normal(0, 0.01, (len(days), 2)), index=days, columns=["A", "B"])
+    holdings = pd.DataFrame({"A": 600.0, "B": 300.0, "cash": 100.0}, index=days)
+
+    path = risk_path(holdings, assets)
+
+    first = path.index[0]
+    w = np.array([0.6, 0.3])
+    history = assets.iloc[:COVARIANCE_WINDOW].to_numpy()
+    expected = np.sqrt(w @ np.cov(history, rowvar=False) @ w * 252)
+    assert path.loc[first, "predicted"] == pytest.approx(expected)
+    assert path[["A", "B"]].sum(axis="columns").to_numpy() == pytest.approx(1.0)
+
+
+def test_effective_number_of_names():
+    from zipfolio.sections.risk_over_time import concentration
+
+    days = pd.bdate_range("2024-01-01", periods=3, tz="UTC")
+    holdings = pd.DataFrame({"A": [100.0, 90.0, 0.0], "B": [100.0, 5.0, 0.0], "C": [100.0, 5.0, 0.0],
+                             "cash": [0.0, 0.0, 100.0]}, index=days)
+
+    crowding = concentration(holdings)
+
+    assert crowding["effective"].iloc[0] == pytest.approx(3.0)
+    assert crowding["effective"].iloc[1] == pytest.approx(1 / (0.9 ** 2 + 0.05 ** 2 * 2))
+    assert crowding.iloc[2].isna().all(), "an all-cash day has no concentration to speak of"
+

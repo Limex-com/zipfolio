@@ -143,26 +143,52 @@ def moex_sector_mappings(ticker_mics, cache_dir: str | Path | None = None, timeo
     return mappings
 
 
+#: Each sector index is asked up to this many times: ISS answers in well under a
+#: second as a rule, and now and then not within the timeout at all.
+MOEX_ATTEMPTS = 3
+
+
 def _moex_table(cache_dir, timeout: float) -> dict[str, str]:
+    """``{ticker: sector}`` across all the sector indices -- all of them, or the cache, or nothing.
+
+    The indices are fetched in parallel, each retried. A table missing one
+    index would file its members as unclassified, which reads as a fact about
+    them; so a partial answer is never used.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     from .factors import _cache_dir, _store
 
     path = _cache_dir(cache_dir) / "moex_sectors.json"
     if path.exists() and time.time() - path.stat().st_mtime < MOEX_SECTORS_MAX_AGE:
         return json.loads(path.read_text())
-    table: dict[str, str] = {}
+
+    def members(index: str) -> list[str]:
+        url = MOEX_ISS_URL.format(index=index) + "?iss.meta=off&limit=100"
+        for attempt in range(MOEX_ATTEMPTS):
+            try:
+                with urllib.request.urlopen(url, timeout=timeout) as response:
+                    analytics = json.load(response)["analytics"]
+                column = analytics["columns"].index("ticker")
+                return [str(row[column]) for row in analytics["data"]]
+            except Exception:
+                if attempt == MOEX_ATTEMPTS - 1:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
+        return []
+
     try:
-        for index, sector in MOEX_SECTOR_INDICES.items():
-            url = MOEX_ISS_URL.format(index=index) + "?iss.meta=off&limit=100"
-            with urllib.request.urlopen(url, timeout=timeout) as response:
-                analytics = json.load(response)["analytics"]
-            column = analytics["columns"].index("ticker")
-            for row in analytics["data"]:
-                table.setdefault(str(row[column]), sector)
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            fetched = dict(zip(MOEX_SECTOR_INDICES, pool.map(members, MOEX_SECTOR_INDICES)))
     except Exception as error:
         if path.exists():
             print(f"Warning: could not refresh the MOEX sector indices ({error}); using the cached copy.")
             return json.loads(path.read_text())
         print(f"Warning: no MOEX sector indices ({error}); the report has no sector section.")
         return {}
+    table: dict[str, str] = {}
+    for index, sector in MOEX_SECTOR_INDICES.items():
+        for ticker in fetched[index]:
+            table.setdefault(ticker, sector)
     _store(path, json.dumps(table, ensure_ascii=False).encode("utf-8"))
     return table

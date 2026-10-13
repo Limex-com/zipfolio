@@ -75,7 +75,7 @@ def build_portfolio_risk(returns, benchmark, positions, bars) -> Section | None:
     section.side.append(f'<p class="caption">{_RISK_GLOSSARY}</p>')
     section.chart(_rolling_tail_risk(columns))
 
-    asset_returns = _asset_returns(bars)
+    asset_returns = daily_asset_returns(bars)
     if positions is None or asset_returns is None:
         return section
 
@@ -104,7 +104,7 @@ def _skfolio_portfolio(returns: pd.DataFrame, weights, **kwargs):
     return Portfolio(X=returns, weights=weights, **{factor: 252}, **kwargs)
 
 
-def _asset_returns(bars) -> pd.DataFrame | None:
+def daily_asset_returns(bars) -> pd.DataFrame | None:
     """Daily returns of the traded names from the bundle's closes; ``None`` when there is too little."""
     if bars is None:
         return None

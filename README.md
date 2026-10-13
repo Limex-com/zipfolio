@@ -53,6 +53,8 @@ still exists, and that is what makes its metrics possible:
 | What did commission cost? | commission per order | `order.commission` (ziplime charges it to the order, not the fill) |
 | What did slippage cost? | the slippage model | `FixedBasisPointsSlippage`: reconstructed exactly from the fill prices |
 | What did each instrument earn? | positions and fills per day | position snapshots, fills with prices and quantities |
+| Which names made each drawdown? | the same, between a peak and its valley | (same) |
+| Was the risk each day what the positions said? | that day's weights and the names' history | position snapshots, the bundle's daily bars |
 | How much capital could the strategy take? | daily volume per traded name | the bundle, folded into sessions |
 | How is the cost model set, in words? | the settings themselves | `PerShare` / `PerDollar`, minimum per order, slippage bps, volume limit |
 
@@ -72,11 +74,14 @@ The default title is "Zipfolio Tearsheet: Portfolio, Execution & Cost Analysis"
 | Section | Shown when | Contents |
 | --- | --- | --- |
 | **Performance** | always | key metrics, cumulative returns, underwater curve -- deliberately short; returns are QuantStats' job |
+| **Market Regimes** | a benchmark is given | up and down capture, beta on up and down days, the average month in rising/falling x calm/volatile markets, monthly returns against the benchmark |
 | **Positions** | the strategy traded | exposure, top positions, long/short concentration, holdings, gross leverage |
 | **Instruments** | traded | each name's PnL, contribution, weight, days held, trade stats; contribution by year; daily and round-trip return distributions per name; cumulative PnL by name |
+| **Drawdowns** | traded | each of the five worst drawdowns split, exactly, across the names and sectors that made it |
 | **Sector Analysis** | a held name has a sector | allocation over time, average and peak, profit attribution by GICS sector |
 | **Factor Analysis** | a factor model is set | Fama-French 5 + momentum (US) or a market model against the benchmark over RUONIA (Moscow): betas with Newey-West t-stats, alpha, fit, attribution (overall and by year), rolling betas, return decomposition |
 | **Portfolio Risk** | always (more when traded) | VaR/CVaR/EVaR, drawdown-at-risk/CDaR/EDaR, Ulcer index, Gini mean difference; rolling tail risk; risk contribution per holding; clustered correlations; the same names under four allocation rules, walk-forward |
+| **Risk Over Time** | traded | predicted volatility (each day's weights x trailing covariance) against what the next month delivered, each name's share of risk by month, effective number of names, top-3 and largest weight |
 | **Transactions** | traded | trading frequency, fill sizes, buys and sells, turnover, volume, fill times on the market's own clock |
 | **Execution** | orders are given | how the backtest fills orders, realism checks, orders by type, fill statistics, fill price within the bar and against its typical price, share of bar volume, implementation shortfall, waits |
 | **Trading Costs** | traded | the cost model in plain words, cost summary and per symbol, costs over time, returns before and after costs, sensitivity to extra slippage |
