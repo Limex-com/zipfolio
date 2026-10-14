@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.1 -- 2026-10-14
+
+A report that says what it found, and three sections that ask whether the
+result is real.
+
+- **Scorecard.** The page opens with a score out of 16 -- the same sixteen
+  checks for every backtest, four per part, each against a fixed threshold
+  (`page.SCORECARD`) -- the counts that hold up, need a look or are critical,
+  one table of verdicts linked to the sections, and a line of context. A
+  check that cannot be made reads N/A and does not pass.
+- **Four parts**: where the return came from, what it risked, how it holds
+  and trades, whether it can be traded; a sticky bar jumps between them.
+- **Next-Bar Fills**: every fill on its signal bar priced again at the next
+  bar's open, same shares and slippage. `zipfolio.ziplime.execution_bars`
+  now returns `next_open` and `next_date` with each fill's bar.
+- **Profit Concentration**: the return without its best 5, 10 and 20 days;
+  the share of profit in the best trades; a luck test -- the same trades
+  redrawn 5,000 times -- with its chance of a net loss.
+- **Long and Short**: PnL, exposure and return on exposure of each side.
+- **Closed Trades** (was Round Trips) opens with what counts as a trade, with
+  examples: pyfolio makes one per closing sale, not one per position.
+- New checks: alpha significance, the riskiest name's share of predicted
+  volatility, the largest sector's share of the book, drawdown against the
+  benchmark, time below a peak, the worst 5% of days, profit still open at
+  the end, leverage, the longest losing streak.
+- Fix: a trade's return is its PnL over what its shares cost (`rt_returns`);
+  Instruments read pyfolio's PnL over the whole portfolio.
+- `Section.finding(status, label, value, note, key)` for sections of your own.
+
 ## 0.1.0 -- 2026-10-13
 
 First release, extracted from the ZipLime backtester, where it builds the
