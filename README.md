@@ -1,7 +1,7 @@
 # Zipfolio
 <p align="center">
   <a href="https://pypi.python.org/pypi/zipfolio"><img src="https://img.shields.io/badge/python-3.12+-blue.svg?style=flat" alt="Python"></a>
-  <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat" alt="License: AGPL-3.0"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=flat" alt="License: Apache-2.0"></a>
   <a href="https://pypi.python.org/pypi/zipfolio"><img src="https://img.shields.io/pypi/v/zipfolio?maxAge=60" alt="PyPI"></a>
   <a href="https://pypi.python.org/pypi/zipfolio"><img src="https://img.shields.io/pypi/dm/zipfolio.svg?maxAge=2592000&label=installs&color=%2327B1FF" alt="Installs"></a>
   <a href="https://github.com/Limex-com/zipfolio"><img src="https://img.shields.io/github/stars/Limex-com/zipfolio.svg?style=social&label=Star&maxAge=60" alt="Stars"></a>
