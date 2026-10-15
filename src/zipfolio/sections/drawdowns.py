@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from ..page import OK, WARN, Section
-from ..style import BENCHMARK_COLOR, PALETTE, chart
+from ..style import BENCHMARK_COLOR, PALETTE, chart, percent_ticks
 from ..tables import Table
 from .instruments import commission_by_day, instrument_pnl
 
@@ -49,18 +49,54 @@ def longest_underwater(returns: pd.Series) -> tuple[pd.Timedelta, bool]:
     return longest, ongoing
 
 
-def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | None) -> None:
+#: Below this average exposure the benchmark is compared at the strategy's exposure, not in full.
+PARTLY_INVESTED = 0.9
+DRAWDOWN_ADVICE = "Size positions smaller, or add an exit that cuts a loss before it compounds."
+
+
+def average_exposure(holdings: pd.DataFrame | None) -> float | None:
+    """The gross book over the portfolio's value, averaged over every session, cash days as zero."""
+    if holdings is None:
+        return None
+    book = holdings.sum(axis="columns")
+    gross = holdings.drop(columns="cash", errors="ignore").abs().sum(axis="columns")
+    return float((gross / book.where(book > 0)).fillna(0.0).mean())
+
+
+def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | None,
+                   exposure: float | None = None) -> None:
+    """Max drawdown, bad days and the longest time under water.
+
+    A strategy in the market a third of the time falls less than its
+    benchmark for that alone. Below ``PARTLY_INVESTED`` its drawdown is judged
+    against the benchmark held at the same average exposure, the rest in cash.
+    """
     import empyrical as ep
 
     depth = ep.max_drawdown(returns)
+    common = dict(key="max_dd", advice=DRAWDOWN_ADVICE)
     if benchmark is not None:
         name = benchmark.name or "the benchmark"
         market = ep.max_drawdown(benchmark)
-        section.finding(OK if depth >= market and depth >= VERY_DEEP_DRAWDOWN else WARN, f"Max drawdown vs {name}",
-                        f"{depth:.1%} vs {market:.1%}",
-                        f"The strategy's deepest fall from a peak against {name}'s over the same sessions. Deeper "
-                        f"than {name}'s, or than {VERY_DEEP_DRAWDOWN:.0%} whatever {name} did, needs a look.",
-                        key="max_dd")
+        if exposure is not None and exposure < PARTLY_INVESTED:
+            matched = ep.max_drawdown(benchmark * exposure)
+            ok = depth >= matched and depth >= VERY_DEEP_DRAWDOWN
+            section.finding(OK if ok else WARN, f"Max drawdown vs {name}",
+                            f"{depth:.1%} vs {matched:.1%} at {exposure:.0%} exposure",
+                            f"The strategy's deepest fall from a peak, {depth:.1%}, against {name}'s {market:.1%} -- "
+                            f"but the strategy held positions only part of the time, at {exposure:.0%} of its capital "
+                            f"on average. {name} held at that exposure, the rest in cash, fell at most {matched:.1%}: "
+                            "that is the fair comparison.",
+                            threshold=f"no deeper than {name} at the same exposure",
+                            issue=(f"its drawdown, {depth:.1%}, is deeper than {name}'s at the same "
+                                   f"{exposure:.0%} exposure ({matched:.1%})"), **common)
+        else:
+            section.finding(OK if depth >= market and depth >= VERY_DEEP_DRAWDOWN else WARN,
+                            f"Max drawdown vs {name}", f"{depth:.1%} vs {market:.1%}",
+                            f"The strategy's deepest fall from a peak against {name}'s over the same sessions. Deeper "
+                            f"than {name}'s, or than {VERY_DEEP_DRAWDOWN:.0%} whatever {name} did, needs a look.",
+                            threshold=f"no deeper than {name}'s, nor than {VERY_DEEP_DRAWDOWN:.0%}",
+                            issue=f"its drawdown, {depth:.1%}, is deeper than {name}'s ({market:.1%})", **common)
         tail, market_tail = expected_shortfall(returns), expected_shortfall(benchmark)
         if market_tail < 0:
             section.finding(OK if tail >= BAD_DAYS_RATIO * market_tail else WARN, "Bad days: average of the worst 5%",
@@ -69,7 +105,9 @@ def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | 
                             f"{name}'s. More than {BAD_DAYS_RATIO:g}x {name}'s needs a look.")
     else:
         section.finding(OK if depth >= DEEP_DRAWDOWN else WARN, "Max drawdown", f"{depth:.1%}",
-                        f"No benchmark to compare with; deeper than {DEEP_DRAWDOWN:.0%} needs a look.", key="max_dd")
+                        f"No benchmark to compare with; deeper than {DEEP_DRAWDOWN:.0%} needs a look.",
+                        threshold=f"no deeper than {DEEP_DRAWDOWN:.0%}", issue=f"its drawdown reached {depth:.1%}",
+                        **common)
     if benchmark is None:
         tail = expected_shortfall(returns)
         section.finding(OK if tail >= BAD_DAYS_FLOOR else WARN, "Bad days: average of the worst 5%", f"{tail:.1%}",
@@ -82,7 +120,10 @@ def _risk_findings(section: Section, returns: pd.Series, benchmark: pd.Series | 
                         f"{months:.0f} months" + (", not recovered" if ongoing else ""),
                         "From a high to the day the strategy was back above it"
                         + (" -- it still is not, at the end of the backtest." if ongoing else ".")
-                        + f" Over {LONG_UNDERWATER_MONTHS} months needs a look: few would hold on that long.")
+                        + f" Over {LONG_UNDERWATER_MONTHS} months needs a look: few would hold on that long.",
+                        key="underwater", threshold=f"at most {LONG_UNDERWATER_MONTHS} months",
+                        issue=f"it spent {months:.0f} months below a previous high",
+                        advice="Ask whether you would keep running it through that long a stretch.")
 
 
 def drawdown_attribution(returns: pd.Series, holdings: pd.DataFrame, transactions: pd.DataFrame,
@@ -134,18 +175,34 @@ def build_drawdowns(returns, holdings, transactions, orders=None, sectors=None, 
     if drawdowns.empty:
         return None
     section = Section("Drawdowns")
-    _risk_findings(section, returns, benchmark)
+    _risk_findings(section, returns, benchmark, average_exposure(holdings))
     labels = [f"#{n + 1}  {row.Peak:%b %Y} - {row.Valley:%b %Y}  ({row.Depth:.1%})"
               for n, row in enumerate(drawdowns.itertuples())]
 
     names = shares.drop(columns=RESIDUAL)
+    single = (names.abs() > 1e-9).any().sum() < 2
     summary = drawdowns.copy()
     for rank, title in ((0, "Largest Drag"), (1, "Second"), (2, "Third")):
         summary[title] = [_nth(row, rank, ascending=True) for _, row in names.iterrows()]
     summary["Best Offset"] = [_nth(row, 0, ascending=False) for _, row in names.iterrows()]
+    # A column of dashes says nothing: no second name, no name that gained.
+    summary = summary.drop(columns=[column for column in ("Second", "Third", "Best Offset")
+                                    if (summary[column] == "-").all()])
+    if single:
+        summary = summary.drop(columns=["Largest Drag"])
     summary.index = [f"#{n + 1}" for n in range(len(summary))]
     section.table(Table(summary, None, None, {"Depth": "{:.2%}".format, "Days": "{:,.0f}".format}),
-                  title="Worst Drawdowns and Who Made Them", first_header="#")
+                  title="Worst Drawdowns" if single else "Worst Drawdowns and Who Made Them", first_header="#")
+
+    if single:
+        from pyfolio import plotting
+
+        section.chart(chart("The Worst Drawdowns", lambda ax: plotting.plot_drawdown_periods(
+            returns, top=TOP_DRAWDOWNS, ax=ax), height=3.5, y="growth"))
+        section.side.append(
+            '<p class="explain">Each drawdown runs from the close of its peak to the close of its valley. One '
+            'name made all of them, so there is no split by name to show.</p>')
+        return section
 
     section.side.append(
         '<p class="explain">Each drawdown -- from the close of its peak to the close of its '
@@ -191,7 +248,6 @@ def _nth(row: pd.Series, rank: int, ascending: bool) -> str:
 
 def _stacked(ax, shares: pd.DataFrame, labels: list[str]) -> None:
     """One bar per drawdown: losses stacked left of zero, offsets right of it, depth marked."""
-    from matplotlib.ticker import FuncFormatter
 
     names = shares.drop(columns=RESIDUAL)
     named = names.abs().sum().sort_values(ascending=False).index[:NAMED]
@@ -218,6 +274,6 @@ def _stacked(ax, shares: pd.DataFrame, labels: list[str]) -> None:
     ax.axvline(0, color="black", lw=1)
     ax.set_yticks(rows)
     ax.set_yticklabels(labels)
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0%}"))
+    ax.xaxis.set_major_formatter(percent_ticks())
     ax.set_xlabel("Points of the drawdown (losses left, offsets right)")
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=4, frameon=False)

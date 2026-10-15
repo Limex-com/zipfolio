@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from ..page import OK, WARN, Section
-from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
+from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart, percent_ticks
 from ..tables import Table
 
 #: The four regimes, in the order they are shown.
@@ -14,24 +14,41 @@ REGIMES = ("Rising, calm", "Rising, volatile", "Falling, calm", "Falling, volati
 MIN_MONTHS = 6
 
 
+#: A first or last month with fewer sessions than this share of a typical month's is left out.
+PARTIAL_MONTH = 0.8
+
+
 def monthly_regimes(returns: pd.Series, benchmark: pd.Series) -> pd.DataFrame:
-    """One row per month: strategy and benchmark returns, and the benchmark's regime.
+    """One row per complete month: strategy and benchmark returns, and the benchmark's regime.
 
     A month is *rising* or *falling* by the benchmark's return over it, and
     *volatile* when the benchmark's daily volatility in it is above its median
     month's -- so half the months are volatile by construction, and the split
     is the strategy's own market's, not an outside index's.
+
+    The backtest's first and last months are left out when they are partial --
+    fewer sessions than ``PARTIAL_MONTH`` of the median month's: seven sessions
+    of October are not a month to compare with a whole one. ``attrs["partial"]``
+    names the months left out.
     """
     daily = pd.DataFrame({"strategy": returns, "benchmark": benchmark}).dropna()
-    grouped = daily.groupby(daily.index.to_period("M") if daily.index.tz is None
-                            else daily.index.tz_convert(None).to_period("M"))
+    periods = daily.index.to_period("M") if daily.index.tz is None else daily.index.tz_convert(None).to_period("M")
+    sessions = pd.Series(1, index=periods).groupby(level=0).size()
+    typical = sessions.median()
+    partial = [period for period in dict.fromkeys((sessions.index[0], sessions.index[-1]))
+               if len(sessions) > 2 and sessions[period] < PARTIAL_MONTH * typical]
+    keep = ~periods.isin(partial)
+    daily, periods = daily[keep], periods[keep]
+    grouped = daily.groupby(periods)
     monthly = grouped.apply(lambda month: (1 + month).prod() - 1)
     monthly["volatility"] = grouped["benchmark"].std()
+    monthly["sessions"] = grouped.size()
     volatile = monthly["volatility"] > monthly["volatility"].median()
     rising = monthly["benchmark"] > 0
     monthly["regime"] = np.select(
         [rising & ~volatile, rising & volatile, ~rising & ~volatile],
         [REGIMES[0], REGIMES[1], REGIMES[2]], default=REGIMES[3])
+    monthly.attrs["partial"] = [f"{period.strftime('%b %Y')} ({sessions[period]} sessions)" for period in partial]
     return monthly
 
 
@@ -57,7 +74,8 @@ def asymmetric_beta(returns: pd.Series, benchmark: pd.Series, rising: bool) -> f
     return float(np.polyfit(days["benchmark"], days["strategy"], 1)[0])
 
 
-def build_market_regimes(returns: pd.Series, benchmark: pd.Series | None) -> Section | None:
+def build_market_regimes(returns: pd.Series, benchmark: pd.Series | None,
+                         exposure: float | None = None) -> Section | None:
     if benchmark is None:
         return None
     monthly = monthly_regimes(returns, benchmark)
@@ -76,12 +94,20 @@ def build_market_regimes(returns: pd.Series, benchmark: pd.Series | None) -> Sec
         "Beta on down days": f"{beta_down:.2f}",
         f"Months {name} rose": f"{int((monthly['benchmark'] > 0).sum()):,} of {len(monthly):,}",
     })
+    if monthly.attrs.get("partial"):
+        facts["Partial months left out"] = ", ".join(monthly.attrs["partial"])
     section.table(Table(facts.to_frame("Value"), None), title=f"Against {name}", first_header="Measure")
     if np.isfinite(up) and np.isfinite(down):
         better = down <= 0 or up / down >= 1
+        partly = (f" At its average exposure of {exposure:.0%}, holding {name} that much of the time would capture "
+                  f"about {exposure:.0%} each way: low capture on both sides is time in cash, not protection; the "
+                  "ratio of the two is what the strategy adds." if exposure is not None and exposure < 0.9 else "")
         section.finding(OK if better else WARN, "Up / down capture", f"{up:.0%} / {down:.0%}",
-                        f"Against {name}: it takes more of the market's rises than of its falls." if better else
-                        f"Against {name}: it takes more of the market's falls than of its rises.", key="capture")
+                        (f"Against {name}: it takes more of the market's rises than of its falls." if better else
+                         f"Against {name}: it takes more of the market's falls than of its rises.") + partly,
+                        key="capture", threshold="up capture at least down capture",
+                        issue=f"it takes more of {name}'s falls than of its rises ({up:.0%} up, {down:.0%} down)",
+                        advice="Look at what it holds into falling months: an exit that reacts sooner, or a filter on the market.")
     section.side.append(
         f'<p class="explain"><b>Up capture</b> is how much of {name}\'s rise the strategy took in '
         f'the months {name} rose -- 120% is a fifth more than the market, 60% a bit over half -- and '
@@ -104,8 +130,6 @@ def build_market_regimes(returns: pd.Series, benchmark: pd.Series | None) -> Sec
         f'{name}\'s daily volatility in it is above the median month\'s.</p>')
 
     def scatter(ax):
-        from matplotlib.ticker import FuncFormatter
-
         for regime, color, marker in zip(REGIMES, (STRATEGY_COLOR, "#4FA487", BENCHMARK_COLOR, LOSS_COLOR),
                                          ("o", "s", "o", "s")):
             months = monthly[monthly["regime"] == regime]
@@ -122,7 +146,7 @@ def build_market_regimes(returns: pd.Series, benchmark: pd.Series | None) -> Sec
                         ls="-" if rising else ":", label=f"{'Up' if rising else 'Down'} months fit ({slope:.2f})")
         ax.axhline(0, color="#666666", lw=0.8)
         ax.axvline(0, color="#666666", lw=0.8)
-        percent = FuncFormatter(lambda value, _: f"{value:.0%}")
+        percent = percent_ticks()
         ax.xaxis.set_major_formatter(percent)
         ax.yaxis.set_major_formatter(percent)
         ax.set_xlabel(f"{name}, month")

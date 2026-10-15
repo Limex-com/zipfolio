@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import io
 import math
+import re
 import traceback
 from typing import Callable
 
 import numpy as np
+
+from .interactive import INTERACTIVE, chart_html, option_for
 
 #: QuantStats Pro's palette (``quantstats/_plotting/core.py``), so the two
 #: reports read as one product: benchmark grey, strategy lime, then the rest.
@@ -109,6 +112,10 @@ def chart(
     ``y`` is ``"pct"`` for a fraction shown as a percent and ``"growth"`` for
     pyfolio's growth-of-one curves, shown as the return they mean (1.35 is 35%).
     A chart that fails is logged and left out; the section goes on without it.
+
+    While a page is built with interactive charts (``interactive.INTERACTIVE``)
+    the drawn figure is rebuilt as an ECharts chart; one the converter cannot
+    read stays SVG.
     """
     import matplotlib.pyplot as plt
 
@@ -117,7 +124,13 @@ def chart(
         draw(axis)
         _restyle(figure, axis, title, y, {**RECOLOR, **(recolor or {})})
         declutter(figure)
-        return _svg(figure)
+        if INTERACTIVE.get():
+            try:
+                option, pixels = option_for(figure, axis, title, height)
+                return chart_html(option, pixels, title)
+            except Exception as error:  # Unsupported, or a chart the converter misreads: the SVG is still right
+                print(f"Note: the chart '{title}' stays static ({type(error).__name__}: {error}).")
+        return _svg(figure, title)
     except Exception:
         print(f"Warning: the pyfolio chart '{title}' could not be drawn. Continuing without it.")
         print(traceback.format_exc())
@@ -141,12 +154,41 @@ def _restyle(figure, axis, title: str, y: str | None, recolor: dict[str, str]) -
             ax.grid(True, color="#dddddd", linewidth=0.5)
         if ax.get_xlabel() in {"date", "Date", "index", "dt"}:
             ax.set_xlabel("")
+        _thousands(ax)
         _restyle_legend(ax, recolor)
     axis.set_title(title)
     if y == "pct":
         percent_axis(axis)
     elif y == "growth":
         percent_axis(axis, offset=1.0)
+
+
+def percent_ticks():
+    """A tick formatter in percent with as many decimals as the ticks need: -2.5%, 0%, 2.5% -- not -3%, 0%, 2%."""
+    from matplotlib.ticker import Formatter
+
+    class PercentTicks(Formatter):
+        decimals = 0
+
+        def set_locs(self, locs):
+            super().set_locs(locs)
+            self.decimals = next((d for d in range(3) if all(abs(round(v * 100, d) - v * 100) < 1e-9 for v in locs)),
+                                 2)
+
+        def __call__(self, value, pos=None):
+            return "0%" if abs(value) < 1e-12 else f"{value * 100:,.{self.decimals}f}%"
+
+    return PercentTicks()
+
+
+def _thousands(ax) -> None:
+    """Big plain numbers with thousands separators, not "500000" or matplotlib's "1e6" offset."""
+    from matplotlib.ticker import FuncFormatter, ScalarFormatter
+
+    for axis, limits, scale in ((ax.xaxis, ax.get_xlim(), ax.get_xscale()), (ax.yaxis, ax.get_ylim(), ax.get_yscale())):
+        if (type(axis.get_major_formatter()) is ScalarFormatter and scale == "linear"
+                and max(abs(limits[0]), abs(limits[1])) >= 10_000):
+            axis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:,.0f}"))
 
 
 def percent_axis(axis, offset: float = 0.0) -> None:
@@ -240,11 +282,30 @@ def _restyle_legend(ax, recolor: dict[str, str]) -> None:
     frame.set_alpha(0.9)
 
 
-def _svg(figure) -> str:
+#: Matplotlib writes its name, a timestamp and the format into every SVG. In the page's
+#: text that is fifty lines of "2026-10-14T12:43:57 image/svg+xml Matplotlib v3.10.7"
+#: in front of the charts -- for search, screen readers, copying, and an LLM reading
+#: the report -- and the timestamp makes two builds of one backtest differ.
+SVG_METADATA = {"Date": None, "Creator": None, "Format": None, "Type": None}
+
+
+def _svg(figure, title: str = "") -> str:
+    """The figure as inline SVG, with no metadata and the chart's title as its accessible name."""
+    import html
+
+    import matplotlib.pyplot as plt
+
     buffer = io.StringIO()
-    figure.savefig(buffer, format="svg", bbox_inches="tight", pad_inches=0.08)
+    # Element ids from a fixed salt: the same backtest draws the same SVG.
+    with plt.rc_context({"svg.hashsalt": "zipfolio"}):
+        figure.savefig(buffer, format="svg", bbox_inches="tight", pad_inches=0.08, metadata=SVG_METADATA)
     text = buffer.getvalue()
-    return text[text.index("<svg"):]
+    text = text[text.index("<svg"):]
+    text = re.sub(r"<metadata>.*?</metadata>\s*", "", text, flags=re.S)
+    if title:
+        opening = text.index(">") + 1
+        text = f'{text[:opening]}<title>{html.escape(title)}</title>{text[opening:]}'
+    return text
 
 
 def declutter(figure) -> None:

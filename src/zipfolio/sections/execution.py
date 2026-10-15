@@ -126,20 +126,31 @@ def build_execution(transactions: pd.DataFrame, orders: pd.DataFrame | None,
     if empty:
         checks.append((INFO, "Orders for zero shares",
                        f"{empty:,} orders asked for no shares -- a rebalance to a weight already held. "
-                       "They are left out of every count here."))
+                       "They are left out of every count here.", "Orders for zero shares", f"{empty:,}"))
     section.side.append("<h3>Realism Checks</h3>" + _checks_html(checks))
     timing = next(check for check in checks if check[3:4] == (TIMING,))
-    section.finding(timing[0], timing[3], timing[4], timing[2], key="timing")
+    section.finding(timing[0], timing[3], timing[4], timing[2], key="timing",
+                    threshold="fills no earlier than the close of the bar that produced the order",
+                    advice="Run it again with next-bar execution: that is the result a real order would get.",
+                    issue=f"fills at the {timing[4]}")
     flagged = sorted((check for check in checks if check[3:4] != (TIMING,) and check[0] in (BAD, WARN)),
                      key=lambda check: check[0] != BAD)
+    common = dict(key="realism", threshold="every fill inside its bar, at a size the bar could take",
+                  advice="Use limit orders, or next-bar execution, so no fill is priced where the market never traded.")
     if flagged:
         worst = flagged[0]
         section.finding(worst[0], "Fill realism", f"{worst[3][0].lower()}{worst[3][1:]}: {worst[4]}",
-                        " ".join(check[2] for check in flagged), key="realism")
+                        " ".join(check[2] for check in flagged),
+                        issue="fills the market would not have given",
+                        **common)
     else:
-        section.finding(OK, "Fill realism", "all checks passed",
-                        "Every fill priced inside its bar, at a size the bar could take; every order filled.",
-                        key="realism")
+        outside = next((check for check in checks if check[3:4] == ("Fills outside the bar's range",)), None)
+        if outside is not None and not outside[4].startswith("0 of"):
+            section.finding(OK, "Fill realism", outside[4], outside[2], **common)
+        else:
+            section.finding(OK, "Fill realism", "all checks passed",
+                            "Every fill priced inside its bar, at a size the bar could take; every order filled.",
+                            **common)
 
     types = book.groupby("type")["state"].value_counts().unstack(fill_value=0)
     for state in ("filled", "partial", "unfilled"):
@@ -154,6 +165,13 @@ def build_execution(transactions: pd.DataFrame, orders: pd.DataFrame | None,
 
     section.table(Table(_statistics(fills, book).to_frame("Value"), None), title="Fill Statistics",
                   first_header="Metric")
+    if "typical_bps" in fills and fills["typical_bps"].notna().any():
+        section.side.append(
+            '<p class="caption"><b>Cost vs bar typical price</b> compares each fill with its bar\'s (high + low '
+            '+ close) / 3, a stand-in for the bar\'s average trade (VWAP); positive is worse. Fills at the close '
+            'far above it mean the strategy trades after a strong move inside the bar -- buying near the top '
+            'of a rising day. An order worked through the day would have paid that difference; '
+            '<a href="#next-bar-fills">Next-Bar Fills</a> shows the same question a bar later.</p>')
 
     failed = book[book["state"] != "filled"]
     if len(failed):
@@ -211,6 +229,53 @@ def _mechanics_text(settings: dict) -> list[str]:
     return lines
 
 
+#: Fills outside their bar that flatter the strategy by this share of its capital are critical;
+#: fills outside it that only cost the strategy need a look from this share.
+FLATTERING_SHARE, COSTLY_SHARE = 0.005, 0.01
+
+
+def outside_effect(fills: pd.DataFrame) -> tuple[int, float, float]:
+    """Fills priced outside their bar's range: how many, and what that did to the strategy, in money.
+
+    A buy below the low or a sell above the high *flatters* the backtest: no
+    one could have traded there, and the strategy was paid for it. A buy
+    above the high or a sell below the low *costs* it -- usually slippage
+    pushing a fill past a bar that closed at its extreme. Each is measured
+    against the nearest edge of the bar: ``(edge - price) x quantity``.
+    """
+    outside = fills[fills["above_high"] | fills["below_low"]]
+    if outside.empty:
+        return 0, 0.0, 0.0
+    edge = np.where(outside["above_high"], outside["bar_high"], outside["bar_low"])
+    gain = (edge - outside["price"]) * outside["amount"]
+    return len(outside), float(gain[gain > 0].sum()), float(-gain[gain < 0].sum())
+
+
+def _range_check(fills: pd.DataFrame, settings: dict) -> tuple:
+    count, flattering, costly = outside_effect(fills)
+    total = len(fills)
+    above, below = int(fills["above_high"].sum()), int(fills["below_low"].sum())
+    if not count:
+        return (OK, "Fill prices inside the bar", f"All {total:,} fills priced inside their bar's high-low range.",
+                "Fills outside the bar's range", f"0 of {total:,}")
+    capital = float(settings.get("capital") or fills["value"].median() or 1.0)
+    detail = (f"{count:,} of {total:,} fills priced outside their bar's high-low range ({above:,} above the "
+              f"high, {below:,} below the low). ")
+    if flattering:
+        status = BAD if flattering >= FLATTERING_SHARE * capital else WARN
+        detail += (f"Some flatter the strategy by {money(flattering, 0)} -- a price no one could have traded at, "
+                   "in its favour. ")
+        value = f"{count:,} of {total:,} outside the bar, in its favour"
+    else:
+        status = WARN if costly >= COSTLY_SHARE * capital else OK
+        detail += (f"All of them cost the strategy, {money(costly, 0)} in all, so the result is if anything "
+                   "understated. ")
+        value = f"{count:,} of {total:,} outside the bar, against it"
+    detail += ("Typically the fixed slippage pushing a fill past a bar that closed at its high or low -- the "
+               "engine's model, not the strategy's code. Limit orders or next-bar execution avoid it.")
+    return status, "Fill prices inside the bar", detail, "Fills outside the bar's range", value
+
+
 def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tuple[str, str, str]]:
     checks = []
     reference = settings.get("price_used_in_order_execution") or "close"
@@ -237,17 +302,7 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
                        "Fill price", f"the bar's {reference}"))
 
     if "above_high" in fills:
-        outside = int((fills["above_high"] | fills["below_low"]).sum())
-        share = outside / len(fills) if len(fills) else 0.0
-        above, below = int(fills["above_high"].sum()), int(fills["below_low"].sum())
-        detail = (f"{outside:,} of {len(fills):,} fills ({share:.1%}) priced outside their bar's "
-                  f"high-low range ({above:,} above the high, {below:,} below the low). "
-                  if outside else f"All {len(fills):,} fills priced inside their bar's high-low range. ")
-        if outside:
-            detail += ("Typically slippage pushing a buy past a bar that closed at its high: the "
-                       "market never traded at that price, so neither could the strategy.")
-        checks.append((OK if not outside else WARN if share < 0.05 else BAD, "Fill prices inside the bar", detail,
-                       "Fills outside the bar's range", f"{outside:,} of {len(fills):,}"))
+        checks.append(_range_check(fills, settings))
 
     if "participation" in fills and fills["participation"].notna().any():
         participation = fills["participation"].dropna()
@@ -275,18 +330,20 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
                        "positions and its actual ones differ by these.",
                        "Orders not filled in full", f"{len(incomplete):,} of {len(book):,}"))
     else:
-        checks.append((OK, "Every order filled in full", f"All {len(book):,} orders filled completely."))
+        checks.append((OK, "Every order filled in full", f"All {len(book):,} orders filled completely.",
+                       "Orders not filled in full", f"0 of {len(book):,}"))
 
     slow = int((book["fills"] > 1).sum())
     if slow:
         checks.append((INFO, "Orders filled over several bars",
                        f"{slow:,} orders filled in more than one piece, each at its own bar's price -- "
-                       "the volume limit at work."))
+                       "the volume limit at work.", "Orders filled over several bars", f"{slow:,}"))
     types = sorted(set(book["type"]))
     if types == ["market"]:
         checks.append((INFO, "Market orders only",
                        "Every order was a market order: the backtest assumes immediate execution at the "
-                       "bar's price plus fixed slippage, with no protection from a bad print."))
+                       "bar's price plus fixed slippage, with no protection from a bad print.",
+                       "Order types", "market only"))
     if "limit" in book.columns and (book["type"] == "limit").any() and "decision_price" in fills:
         limits = book.set_index("id")["limit"]
         priced = fills.assign(limit=fills["order_id"].map(limits)).dropna(subset=["limit"])
@@ -300,9 +357,13 @@ def _checks(fills: pd.DataFrame, book: pd.DataFrame, settings: dict) -> list[tup
 
 
 def _checks_html(checks) -> str:
+    """The checks as lines: a mark, the finding and its reasoning -- and, for the copy of the report an
+    assistant reads, the bare measure and its value (``data-metric``), with no reasoning."""
     rows = []
-    for status, title, detail, *_ in checks:
-        rows.append(f'<div class="check"><span class="mark {status}">{_MARKS[status]}</span>'
+    for status, title, detail, *measure in checks:
+        data = (f' data-metric="{html.escape(measure[0])}" data-value="{html.escape(str(measure[1]))}"'
+                if len(measure) >= 2 else "")
+        rows.append(f'<div class="check"{data}><span class="mark {status}">{_MARKS[status]}</span>'
                     f'<div><b>{html.escape(title)}</b><br>{html.escape(detail)}</div></div>')
     return "".join(rows)
 
@@ -337,7 +398,7 @@ def _statistics(fills: pd.DataFrame, book: pd.DataFrame) -> pd.Series:
                 rows["  of which delay"] = f"{average('delay_bps'):.2f} bps"
                 rows["  of which slippage"] = f"{average('slippage_bps'):.2f} bps"
             if "typical_bps" in weighted:
-                rows["Cost vs bar typical price (value-weighted)"] = f"{average('typical_bps'):.2f} bps"
+                rows["Cost vs the bar's typical price (value-weighted)"] = f"{average('typical_bps'):+.2f} bps"
     return pd.Series(rows)
 
 

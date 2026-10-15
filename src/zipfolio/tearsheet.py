@@ -9,6 +9,7 @@ from typing import Callable
 
 import pandas as pd
 
+from .accounting import external_flows
 from .currency import using_currency
 from .inputs import (
     daily_returns,
@@ -17,11 +18,14 @@ from .inputs import (
     transactions_frame,
     usable_benchmark,
 )
-from .page import DEFAULT_TITLE, Section, ordered, page_html
+from .currency import money
+from .interactive import INTERACTIVE
+from .page import DEFAULT_TITLE, INFO, NA, Section, ordered, page_html
 from .sections.capacity import build_capacity
-from .sections.drawdowns import build_drawdowns
+from .sections.capm import FRONTIER_FACT, TITLE as CAPM_TITLE, build_capm
+from .sections.drawdowns import average_exposure, build_drawdowns
 from .sections.execution import build_execution
-from .sections.factor_analysis import build_factor_analysis, build_market_model_analysis
+from .sections.factor_analysis import build_factor_analysis, build_market_model_analysis, risk_free_for
 from .sections.instruments import build_instruments
 from .sections.long_short import build_long_short
 from .sections.market_regimes import build_market_regimes
@@ -29,7 +33,7 @@ from .sections.next_bar_fills import build_next_bar_fills
 from .sections.performance import build_performance
 from .sections.portfolio_risk import build_portfolio_risk
 from .sections.positions import build_positions
-from .sections.profit_concentration import build_profit_concentration
+from .sections.profit_concentration import BOOTSTRAP_SAMPLES, build_profit_concentration
 from .sections.risk_over_time import build_risk_over_time
 from .sections.round_trips import build_round_trips
 from .sections.sector_analysis import build_sector_analysis
@@ -58,6 +62,16 @@ def build_tearsheet(
     factor_data: pd.DataFrame | None = None,
     risk_free: str | pd.Series | None = "ruonia",
     currency: str = "USD",
+    run_info: dict[str, str] | None = None,
+    trials: int | None = None,
+    interactive: bool = True,
+    opening_state=None,
+    portfolio_events: pd.DataFrame | None = None,
+    contract_specs: dict | None = None,
+    integrity: bool = True,
+    integrity_report=None,
+    integrity_policy=None,
+    run_id: str | None = None,
 ) -> list[str]:
     """Write the Zipfolio tearsheet for one backtest to ``output``.
 
@@ -95,6 +109,10 @@ def build_tearsheet(
     * **Portfolio Risk** -- skfolio's risk measures, always; risk contribution
       and alternative allocations when the strategy traded and ``market_data``
       covers it;
+    * **CAPM and the Efficient Frontier** -- not a check, a map: the security
+      market line and the capital market line against the benchmark, and the
+      long-only efficient frontier of the names held most (from ``market_data``),
+      which is hindsight and drawn as a ceiling;
     * **Risk Over Time** -- when the strategy traded: predicted against
       realized volatility, each name's share of risk, concentration;
 
@@ -124,7 +142,33 @@ def build_tearsheet(
     ``ZIPFOLIO_MARKET_TIMEZONE``, then New York.
 
     ``currency`` (``"USD"``, ``"RUB"``, ``"EUR"``) is how every amount is
-    written, and sets the capital base of the capacity analysis.
+    written.
+
+    ``run_info`` is what the header says about the run, label to value, in
+    order -- the strategy and its version, the benchmark's ticker and whether
+    it is a price or a total return, the universe -- before what the
+    page knows itself (capital, how orders fill, costs). ``trials`` is how many
+    versions of the strategy were backtested, when the caller knows: the
+    Sharpe ratio is then judged against the best of that many strategies with
+    no edge (the deflated Sharpe ratio), not against zero.
+
+    The page opens with an **accounting integrity** panel (``zipfolio.integrity``):
+    whether the numbers on it reconcile to the book -- fills, fees, cash,
+    positions -- with the evidence. ``opening_state`` (the book before the
+    first session; ``zipfolio.ziplime.opening_state`` for a ziplime run),
+    ``contract_specs`` (what each instrument is; ``zipfolio.ziplime.contract_specs``)
+    and ``portfolio_events`` (dividends, fees, flows, splits) let it replay the
+    book from its start; without them it says what it could not check.
+    ``integrity_report`` shows a report made beforehand instead, and
+    ``integrity=False`` leaves the panel out.
+
+    ``interactive`` draws the charts with Apache ECharts -- tooltips, legend
+    toggles, zoom on dates -- with the library inlined, so the page still
+    needs no network; ``False`` keeps every chart a static SVG.
+
+    A strategy that traded one name gets no breakdown by name or sector --
+    Instruments, Sector Analysis, risk contribution, concentration -- since
+    each would say "100%" of that name; the summary says so once.
 
     Returns the titles of the sections that made it into the page, in page order.
     """
@@ -133,6 +177,7 @@ def build_tearsheet(
     from cycler import cycler
     from pyfolio import utils
 
+    raw_returns = returns
     returns = daily_returns(returns)
     if len(returns) < 2:
         raise ValueError(f"pyfolio needs at least two daily returns, got {len(returns)}")
@@ -152,33 +197,43 @@ def build_tearsheet(
     market_timezone = market_timezone or os.getenv("ZIPFOLIO_MARKET_TIMEZONE") or "America/New_York"
 
     bars = None
+    names = sorted(transactions["symbol"].unique()) if transactions is not None else []
     if positions is not None:
-        bars = market_data_frame(market_data, transactions["symbol"].unique(), returns.index)
+        bars = market_data_frame(market_data, names, returns.index)
+    rf, rf_name = risk_free_for(returns.index, factor_model, risk_free, factor_data)
+    exposure = average_exposure(holdings)
 
     # Built in this order -- Portfolio Risk last of all, after pyfolio's styles
     # are no longer needed -- and laid out on the page by group (page.GROUPS).
     builders: list[tuple[str, Callable[[], Section | None]]] = [
-        ("Performance", lambda: build_performance(returns, benchmark, positions, transactions)),
+        ("Performance", lambda: build_performance(returns, benchmark, positions, transactions, bars, rf, rf_name,
+                                                  trials, holdings, orders,
+                                                  external_flows(portfolio_events, returns.index))),
         ("Profit Concentration", lambda: build_profit_concentration(returns, positions, transactions)),
-        ("Market Regimes", lambda: build_market_regimes(returns, benchmark)),
+        ("Market Regimes", lambda: build_market_regimes(returns, benchmark, exposure)),
     ]
     sectors = sectors_of(positions, sector_mappings) if positions is not None else {}
+    several = len(names) > 1
     if positions is not None:
+        builders.append(("Positions", lambda: build_positions(returns, positions)))
+        if several:
+            builders.append(("Instruments", lambda: build_instruments(returns, holdings, positions, transactions,
+                                                                      orders)))
         builders += [
-            ("Positions", lambda: build_positions(returns, positions)),
-            ("Instruments", lambda: build_instruments(returns, holdings, positions, transactions, orders)),
             ("Long and Short", lambda: build_long_short(returns, holdings, transactions, orders)),
             ("Drawdowns", lambda: build_drawdowns(returns, holdings, transactions, orders, sectors or None,
                                                          benchmark)),
         ]
-        if sectors:
+        if sectors and several:
             builders.append(("Sector Analysis", lambda: build_sector_analysis(
-                returns, positions, transactions, sectors)))
+                returns, positions, transactions, sectors, holdings, orders)))
     if factor_model == "market":
         builders.append(("Factor Analysis", lambda: build_market_model_analysis(returns, benchmark, risk_free)))
     elif factor_model:
-        builders.append(("Factor Analysis", lambda: build_factor_analysis(returns, factor_model, factor_data)))
+        builders.append(("Factor Analysis", lambda: build_factor_analysis(returns, factor_model, factor_data,
+                                                                          benchmark=benchmark)))
     builders.append(("Portfolio Risk", lambda: build_portfolio_risk(returns, benchmark, positions, bars)))
+    builders.append((CAPM_TITLE, lambda: build_capm(returns, benchmark, rf, rf_name, positions, bars)))
     if positions is not None:
         builders += [
             ("Risk Over Time", lambda: build_risk_over_time(returns, holdings, bars)),
@@ -186,10 +241,11 @@ def build_tearsheet(
             ("Next-Bar Fills", lambda: build_next_bar_fills(returns, holdings, raw_fills, fill_bars, cost_settings)),
             ("Execution", lambda: build_execution(raw_fills, orders, fill_bars, decision_prices, cost_settings)),
             ("Trading Costs", lambda: build_trading_costs(returns, positions, transactions, orders, cost_settings)),
-            ("Closed Trades", lambda: build_round_trips(returns, positions, transactions)),
+            ("Closed Trades", lambda: build_round_trips(returns, positions, transactions, holdings, orders)),
         ]
         if bars is not None:
-            builders.append(("Capacity", lambda: build_capacity(returns, positions, transactions, bars)))
+            builders.append(("Capacity", lambda: build_capacity(returns, positions, transactions, bars,
+                                                                cost_settings)))
 
     sections: list[Section] = []
     built: list[str] = []
@@ -198,6 +254,7 @@ def build_tearsheet(
     # whose frequency it can infer -- a window with no holiday in it -- in
     # period ordinals, and anything pyfolio adds with matplotlib directly on
     # the same axis lands off-screen: the exposure panel came out empty that way.
+    token = INTERACTIVE.set(interactive)
     with plt.rc_context(rc), pd.plotting.plot_params.use("x_compat", True), using_currency(currency):
         for name, build in builders:
             try:
@@ -213,8 +270,43 @@ def build_tearsheet(
             sections.append(section)
             built.append(name)
 
+    INTERACTIVE.reset(token)
     if not built:
         raise RuntimeError("no Zipfolio section could be built")
+    if len(names) == 1:
+        first = next(section for section in sections if not section.failed)
+        first.finding(INFO, "One name traded", f"{names[0]}: no split by name or sector",
+                      f"Every trade was in {names[0]}, so the breakdowns by name and by sector -- each 100% "
+                      f"{names[0]} -- are left out. A stock picked knowing its history flatters any rule run on "
+                      "it: the same rule on a group of stocks says whether the rule made the money.",
+                      key="one_name")
+        for key, label in (("top_names", "Profit from the top 2 names"), ("sector", "Largest sector, typical day")):
+            first.finding(NA, label, "one name", f"One name traded, {names[0]}: there is nothing to compare it "
+                          "with. The largest position says how concentrated the book was.", key=key)
+    _frontier_beside_buy_and_hold(sections)
+    with using_currency(currency):
+        run = run_details(run_info, benchmark, cost_settings)
+
+    panel = ""
+    if integrity:
+        from .sections.accounting_integrity import panel_html
+
+        error = None
+        if integrity_report is None:
+            try:
+                from .integrity import AccountingInputs, check_integrity
+
+                with using_currency(currency):
+                    integrity_report = check_integrity(AccountingInputs(
+                        returns=raw_returns, position_records=position_records, cash=cash, transactions=raw_fills,
+                        orders=orders, cost_settings=cost_settings, opening_state=opening_state,
+                        portfolio_events=portfolio_events, contract_specs=contract_specs,
+                        sector_mappings=sector_mappings, fill_bars=fill_bars, currency=currency.upper(),
+                        run_id=run_id), integrity_policy, sections=sections)
+            except Exception as failure:
+                print(f"Warning: the accounting integrity check could not run:\n{traceback.format_exc()}")
+                error = f"{type(failure).__name__}: {failure}"
+        panel = panel_html(integrity_report, error)
 
     versions = f"analytics by pyfolio-reloaded {getattr(pf, '__version__', '')}"
     if "Portfolio Risk" in built:
@@ -222,8 +314,49 @@ def build_tearsheet(
 
         versions += f" and skfolio {skfolio.__version__}"
     Path(output).write_text(
-        page_html(title, returns, benchmark, versions, sections),
+        page_html(title, returns, benchmark, versions, sections, run, panel),
         encoding="utf-8",
     )
     # In page order, which is the order a reader meets them in.
     return [section.title for _, members in ordered(sections) for section in members if section.title in built]
+
+
+def _frontier_beside_buy_and_hold(sections: list[Section]) -> None:
+    """The buy-and-hold check says where the efficient frontier of the same names puts the strategy.
+
+    Both ask whether the strategy did more with its names than a passive holding
+    of them: buy and hold is the mix a reader could have held, the frontier the
+    best one hindsight could pick. The frontier stays out of the score.
+    """
+    found = [finding for section in sections if not section.failed for finding in section.findings]
+    frontier = next((finding for finding in found if finding.section == CAPM_TITLE and finding.label == FRONTIER_FACT),
+                    None)
+    holding = next((finding for finding in found if finding.key == "buy_hold"), None)
+    if frontier is not None and holding is not None:
+        holding.note = f"{holding.note} {frontier.note}"
+        holding.see = CAPM_TITLE
+
+
+def run_details(run_info: dict[str, str] | None, benchmark: pd.Series | None, settings: dict | None) -> dict[str, str]:
+    """What the header says about the run: the caller's facts first, then what the page knows itself."""
+    run = {str(label): str(value) for label, value in (run_info or {}).items()}
+    if "Benchmark" not in run:
+        run["Benchmark"] = str(benchmark.name) if benchmark is not None and benchmark.name else (
+            "Benchmark" if benchmark is not None else "none")
+    settings = settings or {}
+    if settings.get("capital"):
+        run.setdefault("Capital", money(float(settings["capital"]), 0))
+    if settings:
+        reference = settings.get("price_used_in_order_execution") or "close"
+        when = "the signal bar" if settings.get("same_bar_execution", True) else "the next bar"
+        limit = settings.get("slippage_volume_limit")
+        run.setdefault("Fills", f"at {when}'s {reference}, {float(settings.get('slippage_basis_points') or 0):g} bps "
+                                "slippage" + (f", up to {float(limit):.0%} of a bar's volume" if limit else ""))
+        if settings.get("commission_model") == "per_dollar":
+            rate = settings.get("commission_rate")
+            rate = settings.get("commission_per_share") if rate is None else rate
+            run.setdefault("Commission", f"{float(rate):.4%} of value")
+        elif settings.get("commission_per_share") is not None:
+            run.setdefault("Commission", f"{money(float(settings['commission_per_share']), 4)} a share")
+    run.setdefault("Luck test", f"{BOOTSTRAP_SAMPLES:,} redraws, seed 0")
+    return run

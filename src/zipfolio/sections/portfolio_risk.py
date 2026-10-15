@@ -8,20 +8,20 @@ import numpy as np
 import pandas as pd
 
 from ..page import Section
-from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
+from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart, percent_ticks
 from ..tables import Table
 
 # Risk measures from skfolio, as (label, attribute, kind). "loss" measures are
 # reported by skfolio as positive numbers and shown here as negative, the way
 # pyfolio and QuantStats show a drawdown.
 _SKFOLIO_MEASURES = [
-    ("Annualized mean", "annualized_mean", "pct"),
+    ("Annual mean return (arithmetic)", "annualized_mean", "pct"),
     ("Annualized volatility", "annualized_standard_deviation", "pct"),
     ("Annualized semi-deviation", "annualized_semi_deviation", "pct"),
     ("Mean absolute deviation (daily)", "mean_absolute_deviation", "pct"),
     ("Gini mean difference (daily)", "gini_mean_difference", "pct"),
-    ("VaR 95% (daily)", "value_at_risk", "loss"),
-    ("CVaR 95% (daily)", "cvar", "loss"),
+    ("VaR 95%, daily (historical)", "value_at_risk", "loss"),
+    ("CVaR 95%, daily (historical)", "cvar", "loss"),
     ("EVaR 95% (daily)", "evar", "loss"),
     ("Worst day", "worst_realization", "loss"),
     ("Max drawdown", "max_drawdown", "loss"),
@@ -30,13 +30,14 @@ _SKFOLIO_MEASURES = [
     ("CDaR 95%", "cdar", "loss"),
     ("EDaR 95%", "edar", "loss"),
     ("Ulcer index", "ulcer_index", "number"),
-    ("Sharpe (annualized)", "annualized_sharpe_ratio", "number"),
-    ("Sortino (annualized)", "annualized_sortino_ratio", "number"),
 ]
+# The Sharpe and Sortino ratios are in Key Performance Metrics, with their rate; skfolio's
+# arithmetic ones beside them read as a second answer to the same question.
 
 
 _RISK_GLOSSARY = (
-    "<b>VaR 95%</b> is the daily loss exceeded on one day in twenty; <b>CVaR</b> is the "
+    "<b>VaR 95%</b> is the daily loss exceeded on one day in twenty, read from the backtest's own "
+    "days rather than from a normal curve -- which fat tails would make too mild; <b>CVaR</b> is the "
     "average loss on those days. <b>EVaR</b> (entropic VaR) is an upper bound on both, "
     "derived from the whole distribution rather than its tail alone, so it reacts more "
     "to fat tails. <b>Drawdown at risk</b>, <b>CDaR</b> and <b>EDaR</b> are the same three "
@@ -81,6 +82,8 @@ def build_portfolio_risk(returns, benchmark, positions, bars) -> Section | None:
 
     weights = (positions.drop(columns="cash").div(positions.sum(axis="columns"), axis="index")
                .reindex(columns=asset_returns.columns).fillna(0.0).mean())
+    if int((weights.abs() > 0).sum()) < 2:
+        return section  # one name carries all of the risk: nothing to split
     _risk_contribution(section, asset_returns, weights)
     if asset_returns.shape[1] >= 3:
         _holding_correlations(section, asset_returns, weights)
@@ -142,9 +145,8 @@ def _risk_contribution(section: Section, asset_returns: pd.DataFrame, weights: p
         ax.set_yticks(positions_y)
         ax.set_yticklabels(top.index)
         ax.legend(loc="lower right")
-        from matplotlib.ticker import FuncFormatter
 
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0%}"))
+        ax.xaxis.set_major_formatter(percent_ticks())
 
     section.chart(chart("Risk Contribution by Holding", draw, height=max(3.0, 0.42 * len(top) + 1.0)))
 
@@ -192,7 +194,10 @@ def _holding_correlations(section: Section, asset_returns: pd.DataFrame, weights
 
         sns.heatmap(correlation, ax=ax, cmap="RdYlGn_r", vmin=-1, vmax=1, center=0,
                     annot=len(correlation) <= 12, fmt=".2f", annot_kws={"size": 8}, cbar=True,
-                    cbar_kws={"shrink": 0.7}, linewidths=0.5, linecolor="white")
+                    cbar_kws={"shrink": 0.7}, linewidths=0.5, linecolor="white",
+                    # Every name, not seaborn's every other one: a column without its name is a guess.
+                    xticklabels=True, yticklabels=True)
+        ax.tick_params(axis="x", labelrotation=90)
         ax.set_xlabel("")
         ax.set_ylabel("")
 

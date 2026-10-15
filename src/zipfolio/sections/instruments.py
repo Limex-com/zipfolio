@@ -9,8 +9,8 @@ import pandas as pd
 
 from ..currency import money, money_formatter, unit
 from ..inputs import utc_dates
-from ..page import OK, WARN, Section
-from ..style import LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
+from ..page import NA, OK, WARN, Section
+from ..style import LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart, percent_ticks
 from ..tables import Table
 from .round_trips import extract_round_trips
 
@@ -51,12 +51,19 @@ def commission_by_day(orders: pd.DataFrame | None, index: pd.DatetimeIndex, colu
     return by_day.reindex(index=index, columns=columns, fill_value=0.0).fillna(0.0)
 
 
+#: Advice for the whole concentration family.
+CONCENTRATION_ADVICE = ("Run the same rule on a group of stocks -- a universe such as Q100US -- to see whether the "
+                        "rule made the money, or the stock.")
+
+
 def _concentration_finding(section: Section, summary: pd.DataFrame) -> None:
     traded = summary[summary["Days Held"] > 0]
     total = float(traded["Net PnL"].sum())
+    common = dict(key="top_names", threshold="under 75% of the net PnL", advice=CONCENTRATION_ADVICE)
     if len(traded) < 3:
-        section.finding(WARN, "Profit from the top 2 names", f"{len(traded)} name{'s' if len(traded) != 1 else ''} "
-                        "traded", "Two names or fewer: the whole result is one or two bets.", key="top_names")
+        section.finding(NA, "Profit from the top 2 names", f"{len(traded)} name{'s' if len(traded) != 1 else ''} "
+                        "traded", "With two names or fewer there are no other names to compare with; the largest "
+                        "position says how concentrated the book was.", key="top_names")
         return
     if total > 0:
         top = traded["Net PnL"].nlargest(2)
@@ -65,12 +72,12 @@ def _concentration_finding(section: Section, summary: pd.DataFrame) -> None:
                         f"{share:.0%} ({top.index[0]}, {top.index[1]})",
                         f"{top.index[0]} and {top.index[1]} made {share:.0%} of the net PnL; "
                         f"{len(traded):,} instruments held in all. Over 100% means the rest lost money.",
-                        key="top_names")
+                        issue=f"{top.index[0]} and {top.index[1]} made {share:.0%} of the profit", **common)
     else:
         worst = traded["Net PnL"].nsmallest(2)
         section.finding(WARN, "Profit from the top 2 names", "no net profit",
                         f"A net loss of {money(-total, 0)}; {worst.index[0]} and {worst.index[1]} lost the most "
-                        f"of {len(traded):,} instruments held.", key="top_names")
+                        f"of {len(traded):,} instruments held.", issue="the names lost money together", **common)
 
 
 def build_instruments(returns, holdings, positions, transactions, orders=None) -> Section:
@@ -103,7 +110,8 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
     summary = pd.DataFrame({
         "Net PnL": total_pnl,
         "Contribution": contribution.sum(),
-        "Share of PnL": total_pnl / total_pnl.sum() if total_pnl.sum() else np.nan,
+        # A share of a loss turns a name that made money negative: shown only when there is a profit to share.
+        **({"Share of PnL": total_pnl / total_pnl.sum()} if total_pnl.sum() > 0 else {}),
         "Avg. Weight": weights.where(held).mean(),
         "Days Held": held.sum(),
         "Commission": commission.sum(),
@@ -149,9 +157,8 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
         bars = ranked.sort_values()
         ax.barh(bars.index, bars.to_numpy(), color=np.where(bars >= 0, STRATEGY_COLOR, LOSS_COLOR))
         ax.axvline(0, color="black", lw=1)
-        from matplotlib.ticker import FuncFormatter
 
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0%}"))
+        ax.xaxis.set_major_formatter(percent_ticks())
 
     section.chart(chart("Contribution to Return by Instrument", contributions,
                         height=max(2.6, 0.32 * len(ranked) + 1.2)))
@@ -206,7 +213,6 @@ def build_instruments(returns, holdings, positions, transactions, orders=None) -
 
 def _boxes(ax, samples, labels, points: bool = False) -> None:
     """Horizontal box plots, one per instrument, on a percent axis."""
-    from matplotlib.ticker import FuncFormatter
 
     kept = [(sample, label) for sample, label in zip(samples, labels) if len(sample)]
     if not kept:
@@ -226,4 +232,4 @@ def _boxes(ax, samples, labels, points: bool = False) -> None:
                        color=np.where(np.asarray(sample) >= 0, STRATEGY_COLOR, LOSS_COLOR), alpha=0.7,
                        zorder=3, linewidths=0)
     ax.axvline(0, color="black", lw=1, ls="--")
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0%}"))
+    ax.xaxis.set_major_formatter(percent_ticks())

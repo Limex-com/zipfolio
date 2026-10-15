@@ -121,3 +121,38 @@ def execution_bars(bundle, fills: pd.DataFrame, orders: pd.DataFrame | None = No
     except Exception:
         print(f"Warning: no execution bars for the Zipfolio tearsheet:\n{traceback.format_exc()}")
         return empty
+
+
+#: Venues whose listings are cash equities and exchange-traded funds -- worth shares x price, fully paid.
+#: A listing anywhere else (futures, options, indices) is not valued by the integrity check.
+EQUITY_VENUES = frozenset({"XNYS", "XNAS", "XNGS", "XNMS", "XNCM", "ARCX", "BATS", "XASE", "IEXG", "XCHI", "MISX"})
+
+
+def opening_state(capital: float, first_session, currency: str = "USD"):
+    """A ziplime backtest's book before its first session: the capital in cash, nothing held.
+
+    What ``zipfolio.integrity`` replays the book from (``AccountingInputs.opening_state``).
+    """
+    from .integrity import OpeningState
+
+    return OpeningState(timestamp=pd.Timestamp(first_session), cash=float(capital), currency=currency)
+
+
+def contract_specs(listings, currency: str = "USD") -> dict:
+    """``{symbol: ContractSpec}`` for ``"SYMBOL@MIC"`` listings, keyed by the bare symbol the run's frames use.
+
+    An equity venue (``EQUITY_VENUES``) gives a cash equity, multiplier 1, in the run's currency; any other
+    venue an instrument the integrity check does not value. A listing without a venue is left out, so the
+    check says it could not value it rather than assume.
+    """
+    from .integrity import ContractSpec
+
+    specs = {}
+    for listing in listings or []:
+        symbol, _, venue = str(listing).partition("@")
+        if not venue:
+            continue
+        kind = "equity" if venue.upper() in EQUITY_VENUES else "other"
+        specs[symbol] = ContractSpec(kind=kind, multiplier=1.0, currency=currency)
+        specs[str(listing)] = specs[symbol]
+    return specs

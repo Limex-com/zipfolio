@@ -1,7 +1,7 @@
-"""The report's currency: how money is written, and what a sensible capital base is.
+"""The report's currency: how money is written.
 
 A US backtest is in dollars and a Moscow one in roubles, and every amount on the
-page -- PnL, costs, fill sizes, the capital base of the capacity analysis -- has
+page -- PnL, costs, fill sizes, capacity -- has
 to say which. The currency is set for the duration of one page
 (:func:`using_currency`) and read wherever money is written (:func:`money`).
 """
@@ -19,8 +19,8 @@ class Currency:
     symbol: str
     #: Whether the symbol follows the amount, as roubles do ("1,250 ₽").
     symbol_after: bool
-    #: The capital the capacity analysis measures liquidity against: about a
-    #: million dollars, in this currency.
+    #: About a million dollars in this currency. Kept for callers; the capacity
+    #: analysis now measures at the strategy's own capital.
     capacity_base: float
 
 
