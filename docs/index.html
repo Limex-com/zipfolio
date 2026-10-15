@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Zipfolio examples</title>
-<meta name="description" content="Live Zipfolio tearsheets built from real backtests: a US momentum rotation, a Moscow one, and the same US backtest in QuantStats.">
+<meta name="description" content="A live Zipfolio tearsheet built from a real backtest, and the same backtest in QuantStats.">
 <style>
   :root { --ink: #1d1d1f; --muted: #6b6b6b; --line: #e6e6e6; --accent: #6B9E00; --link: #0099cc; }
   * { box-sizing: border-box; }
@@ -30,7 +30,7 @@
 <main>
   <h1>Zipfolio</h1>
   <p class="tag">Backtest tearsheets that read the book, not just the returns.</p>
-  <p>Each page below is a real Zipfolio report, built by <code>zipfolio.build_tearsheet</code> from a ziplime backtest. Every chart is live: hover it, zoom it, hide a series, open it full screen, save it as an image.</p>
+  <p>The first page below is a real Zipfolio report, built by <code>zipfolio.build_tearsheet</code> from a ziplime backtest. Every chart is live: hover it, zoom it, hide a series, open it full screen, save it as an image.</p>
 
   <div class="cards">
     <a class="card" href="examples/us-momentum.html">
@@ -38,14 +38,9 @@
       <span>Top 3 of 10 US large caps, monthly, Oct 2023 – Oct 2026, $1m against SPY. All 17 sections.</span>
       <em>Open the report →</em>
     </a>
-    <a class="card" href="examples/moscow-momentum.html">
-      <b>Moscow momentum rotation</b>
-      <span>10 MOEX blue chips against IMOEX, in roubles: RUONIA as the risk-free rate, MOEX sector indices.</span>
-      <em>Open the report →</em>
-    </a>
     <a class="card qs" href="examples/us-momentum-quantstats.html">
       <b>The same US backtest in QuantStats</b>
-      <span>QuantStats 0.0.86 on the same daily returns, for comparison.</span>
+      <span>QuantStats 0.0.86 on the same daily returns, to compare what each one shows.</span>
       <em>Open the report →</em>
     </a>
   </div>

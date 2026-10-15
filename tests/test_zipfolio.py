@@ -834,6 +834,30 @@ def test_money_is_written_in_the_report_currency():
     assert money(1) == "$1.00", "the currency is the page's, and only for as long as it is built"
 
 
+def test_each_currency_writes_money_its_own_way():
+    from zipfolio.currency import CURRENCIES, compact, millions, money, money_formatter, unit, using_currency
+
+    expected = {
+        "EUR": ("€1,234.56", "-€5.00"), "GBP": ("£1,234.56", "-£5.00"), "JPY": ("¥1,235", "-¥5"),
+        "KRW": ("₩1,235", "-₩5"), "CHF": ("CHF 1,234.56", "-CHF 5.00"),
+        "HKD": ("HK$1,234.56", "-HK$5.00"), "SEK": ("SEK 1,234.56", "-SEK 5.00"),
+        "ZAR": ("R1,234.56", "-R5.00"), "INR": ("₹1,234.56", "-₹5.00"),
+    }
+    for code, (gain, loss) in expected.items():
+        with using_currency(code.lower()):
+            assert (money(1234.56), money(-5)) == (gain, loss), code
+    with using_currency("JPY"):
+        assert money(0.5, 4) == "¥0.5000", "a price per share keeps the digits asked for"
+        assert money_formatter()(1234.56) == "¥1,235"
+        assert compact(-2.7e6) == "-¥2.7m" and millions(3e8) == "¥300m" and unit() == "¥"
+    with using_currency("CHF"):
+        assert compact(109_600) == "CHF 109.6k" and unit() == "CHF"
+    assert len({c.symbol for c in CURRENCIES.values()}) == len(CURRENCIES), "no two currencies look alike"
+    with pytest.raises(ValueError, match="GBP"):
+        with using_currency("XYZ"):
+            pass
+
+
 def test_risk_free_accrues_the_day_before_rate_over_calendar_days():
     from zipfolio.factors import risk_free_returns
 
@@ -896,6 +920,31 @@ def test_the_market_model_keeps_the_rate_out_of_alpha(pyfolio):
     alpha = float(re.search(r"<td>Alpha \(annualized\)</td><td>(-?[\d.]+)%</td>", table).group(1))
     assert beta == pytest.approx(0.8, abs=0.03)
     assert abs(alpha) < 3, "a 16% rate left in the regression would show up here as alpha"
+
+
+def test_a_market_model_without_a_rate_downloads_none_and_says_so(pyfolio, monkeypatch, tmp_path):
+    import zipfolio.factors as factors
+    import zipfolio.sections.factor_analysis as factor_analysis
+
+    def no_download(*args, **kwargs):
+        raise AssertionError("a rate the caller did not name must not be downloaded")
+
+    monkeypatch.setattr(factors, "ruonia", no_download)
+    monkeypatch.setattr(factor_analysis, "ruonia", no_download)
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    benchmark = pd.Series(np.random.default_rng(1).normal(0.0003, 0.009, len(closes)), index=closes,
+                          name="DAX")
+    output = tmp_path / "zipfolio.html"
+
+    built = build_tearsheet(output, returns, benchmark, records, cash, fills, factor_model="market",
+                            currency="EUR")
+
+    assert "Factor Analysis" in built
+    page = output.read_text(encoding="utf-8")
+    assert "Market model: DAX" in page and "No risk-free rate was given" in page
+    assert "€" in page
+    assert factor_analysis.risk_free_for(daily_returns(returns).index, "market") == (None, "")
 
 
 def test_no_benchmark_no_market_model(pyfolio):

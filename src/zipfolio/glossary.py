@@ -27,7 +27,7 @@ TERMS: list[tuple[str, str]] = [
                  "portfolio's value."),
     (r"contribution", "Daily PnL after commission over the portfolio's value at the start of each day, added up. "
                       "Summed over the names it is the sum of the daily returns, not the compounded total return, so "
-                      "a name can show a dollar loss and a positive contribution, or the reverse."),
+                      "a name can lose money and still show a positive contribution, or the reverse."),
     (r"(their pnl|total pnl), before commission", "The closed trades' PnL added up: realized, before commission. "
                                                   "Positions still held are not in it."),
     # Return

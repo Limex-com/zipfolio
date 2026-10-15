@@ -12,9 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://limex-com.github.io/zipfolio/examples/us-momentum.html"><b>▶ Live report: US momentum</b></a>
-  &nbsp;·&nbsp;
-  <a href="https://limex-com.github.io/zipfolio/examples/moscow-momentum.html"><b>▶ Live report: Moscow momentum</b></a>
+  <a href="https://limex-com.github.io/zipfolio/examples/us-momentum.html"><b>▶ Open a live report</b></a>
   &nbsp;·&nbsp;
   <a href="https://limex-com.github.io/zipfolio/examples/us-momentum-quantstats.html">The same backtest in QuantStats</a>
 </p>
@@ -101,7 +99,6 @@ position carried the risk. Zipfolio reads the book the returns came from:
 | Commission and slippage, reconstructed and stress-tested | — | ✅ |
 | Capacity | — | ✅ |
 | Closed trades: win rate, profit factor, holding time | — | ✅ |
-| Moscow Exchange: roubles, RUONIA, IMOEX, MOEX sectors | — | ✅ |
 | Rolling Sharpe and Sortino, monthly returns heatmap, the strategy's return histogram | ✅ | — |
 
 The last row is deliberate. Zipfolio covers what a return series cannot show and leaves return
@@ -183,25 +180,25 @@ shows the result, and the same check runs from a shell or in CI:
 python -m zipfolio.integrity book.pkl --mode ci --json accounting_integrity.json
 ```
 
-## US and Moscow
+## Any market
 
-| | US | Moscow |
+US stocks get Fama-French factors by default. For any other market, use a market model against your
+own benchmark and risk-free rate:
+
+| | US stocks (default) | Any other market |
 | --- | --- | --- |
-| Currency | `currency="USD"` | `currency="RUB"` |
-| Factors | Fama-French 5 + momentum | market model against IMOEX over RUONIA |
-| Risk-free rate | one-month T-bill (Fama-French `RF`) | RUONIA, from the Bank of Russia |
-| Sectors | GICS, from a table you supply | Moscow Exchange sector indices |
+| Factors | Fama-French 5 + momentum | `factor_model="market"`: alpha and beta against your benchmark |
+| Risk-free rate | one-month T-bill (Fama-French `RF`) | `risk_free=`: your rate as a series, in percent a year |
+| Sectors | GICS, from a table you supply | any `{symbol: sector}` |
+| Currency | `currency="USD"` | `"EUR"`, `"GBP"`, `"JPY"`, `"CHF"`... any of 24 ISO codes |
+| Clock for fill times | New York | `market_timezone=`, the venue's own |
 
 ```python
-from zipfolio import build_tearsheet, moex_sector_mappings
-
-build_tearsheet("report.html", returns, imoex.rename("IMOEX"), ...,
-                factor_model="market", risk_free="ruonia", currency="RUB",
-                market_timezone="Europe/Moscow",
-                sector_mappings=moex_sector_mappings(["SBER@MISX", "GAZP@MISX", ...]))
+build_tearsheet("report.html", returns, dax.rename("DAX"), ...,
+                factor_model="market", risk_free=estr.rename("€STR"),
+                currency="EUR", market_timezone="Europe/Berlin",
+                sector_mappings={"SAP": "Information Technology", "ALV": "Financials"})
 ```
-
-<img src="https://raw.githubusercontent.com/Limex-com/zipfolio/main/docs/images/ru-treemap.png" alt="The Moscow example's sector treemap: oil and gas, metals and mining, financials, telecoms, consumer">
 
 ## Inputs
 
@@ -219,10 +216,10 @@ All inputs are plain pandas. Only `returns` is required.
 | `decision_prices` | `decision_price` indexed by order `id` | Execution (shortfall) |
 | `market_data` | rows of `symbol, day, price, volume` | Capacity, Portfolio Risk, Efficient Frontier |
 | `cost_settings` | `commission_model, commission_per_share, commission_rate, commission_min_trade_cost, slippage_basis_points, slippage_volume_limit, price_used_in_order_execution, same_bar_execution, capital` | Trading Costs, Execution |
-| `sector_mappings` | `{symbol: sector}`, or `us_sector_mappings([...], table=...)` / `moex_sector_mappings([...])` | Sector Analysis |
+| `sector_mappings` | `{symbol: sector}`, or `us_sector_mappings([...], table=...)` for GICS from your own table | Sector Analysis |
 | `factor_model` | `"ff5_mom"` (default), `"ff5"`, `"ff3"`, `"ff3_mom"`, `"market"` or `None` | Factor Analysis |
-| `risk_free` | for `"market"`: `"ruonia"` (default) or a series of a rate in percent a year | Factor Analysis |
-| `currency` | `"USD"` (default), `"RUB"`, `"EUR"` | how every amount is written |
+| `risk_free` | for `"market"`: the risk-free rate as a series in percent a year. Default `None`: nothing is downloaded, the model runs on raw returns and the report says so | Factor Analysis |
+| `currency` | an ISO code: `"USD"` (default), `"EUR"`, `"GBP"`, `"JPY"`, `"CHF"`, `"CAD"`... 24 in `zipfolio.CURRENCIES` | how every amount is written: `€1,234.56`, `¥1,235`, `CHF 1,234.56` |
 | `trials` | how many versions of the strategy were tried: the Sharpe ratio is then deflated for them | Performance |
 | `run_info` | `{label: value}` for the header: strategy, benchmark, universe | header |
 | `interactive` | `True` (default) or `False` for static SVG | every chart |
@@ -245,8 +242,7 @@ nothing else changes. To install the latest unreleased code:
 `pip install "zipfolio[all] @ git+https://github.com/Limex-com/zipfolio"`.
 
 **Network:** the page itself makes no requests. The library downloads Fama-French factors from Kenneth
-French's data library and caches them for a week. For Moscow it also reads RUONIA from the Bank of
-Russia and sector membership from the exchange's ISS. If a download fails, the library falls back to
+French's data library and caches them for a week. If the download fails, the library falls back to
 the cache, and failing that the report shows a note. **GICS sectors are not shipped**, because MSCI
 and S&P license the classification: bring your own table, or pass any `{symbol: sector}`. Details
 are in [Data the package fetches or ships](https://github.com/Limex-com/zipfolio/blob/main/docs/REFERENCE.md#data-the-package-fetches-or-ships).
