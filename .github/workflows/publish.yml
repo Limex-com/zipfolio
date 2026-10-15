@@ -1,0 +1,126 @@
+name: Publish to PyPI
+
+# A GitHub release publishes the package. Create a release whose tag is the version in pyproject.toml
+# (0.3.1 or v0.3.1): this workflow builds the wheel and sdist from the tag, runs the tests against the
+# wheel, uploads both to PyPI and attaches them to the release.
+#
+# To publish a release that already exists, run it by hand: Actions -> Publish to PyPI -> Run workflow,
+# with the release's tag.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of the release to publish, e.g. 0.3.0"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: The tag matches the package version
+        run: |
+          tag="${TAG#v}"
+          project=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          module=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/zipfolio/__init__.py)
+          echo "tag: $tag, pyproject.toml: $project, src/zipfolio/__init__.py: $module"
+          if [ "$tag" != "$project" ] || [ "$tag" != "$module" ]; then
+            echo "::error::Tag $TAG does not match the package version (pyproject.toml: $project, __init__.py: $module)"
+            exit 1
+          fi
+      - name: Build the wheel and sdist
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  test:
+    name: Tests against the wheel
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Install the wheel with every extra
+        # pyarrow: zipfolio.ziplime hands pandas frames to polars, which needs it for non-numpy columns
+        run: python -m pip install "$(ls dist/*.whl)[all]" pytest pyarrow
+      - name: Run the tests
+        # The tests run from a copy, away from src/, so they import zipfolio from the wheel. They never
+        # touch the network: factor downloads are replaced by synthetic factors.
+        run: |
+          mkdir "$RUNNER_TEMP/suite"
+          cp -r tests "$RUNNER_TEMP/suite/"
+          cd "$RUNNER_TEMP/suite"
+          python -m pytest tests -q -p no:cacheprovider
+
+  publish:
+    name: Publish to PyPI
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/zipfolio/
+    permissions:
+      id-token: write  # Trusted Publishing: PyPI issues a token for this one run
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # An empty secret means Trusted Publishing. Without a trusted publisher on PyPI, put an API
+          # token in the PYPI_API_TOKEN secret of the pypi environment.
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          # A version already on PyPI (uploaded by hand) is not an error: its files are left as they are.
+          skip-existing: true
+
+  attach:
+    name: Attach the files to the release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - name: Attach the wheel and sdist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --verify-tag --generate-notes --title "Zipfolio ${TAG#v}"
+          fi
