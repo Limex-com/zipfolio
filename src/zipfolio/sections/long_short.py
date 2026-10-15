@@ -75,7 +75,7 @@ def build_long_short(returns, holdings, transactions, orders=None) -> Section | 
         capital = float(exposure.loc[active, leg].mean()) if active.any() else 0.0
         rows[leg] = {
             "Net PnL": net,
-            "Share of PnL": net / total if total else np.nan,
+            **({"Share of PnL": net / total} if total > 0 else {}),  # a share of a loss reads backwards
             "Contribution": float((legs[leg] / start_value).sum()),
             "Avg. Exposure": float((exposure[leg] / portfolio).where(active).mean()) if active.any() else np.nan,
             "Days Held": int(active.sum()),

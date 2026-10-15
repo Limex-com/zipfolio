@@ -5,9 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..page import OK, WARN, Section
+from ..page import DATE_FORMAT, NA, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, PALETTE, STRATEGY_COLOR, chart
 from ..tables import Table
+from .instruments import CONCENTRATION_ADVICE
 from .portfolio_risk import daily_asset_returns
 
 #: Sessions of history behind each day's covariance, and ahead of it for the realized check.
@@ -76,13 +77,20 @@ def build_risk_over_time(returns: pd.Series, holdings: pd.DataFrame, bars) -> Se
     asset_returns = daily_asset_returns(bars)
     section = Section("Risk Over Time")
     crowding = concentration(holdings)
+    values = holdings.drop(columns="cash", errors="ignore")
+    single = int((values.abs().sum() > 0).sum()) < 2
 
     path = pd.DataFrame()
     if asset_returns is not None and len(asset_returns) > COVARIANCE_WINDOW + REALIZED_WINDOW:
         path = risk_path(holdings, asset_returns)
         if not path.empty:
-            _forecast(section, returns, path)
-            _risk_shares(section, path.drop(columns="predicted"))
+            _forecast(section, returns, path, holdings)
+            if not single:
+                _risk_shares(section, path.drop(columns="predicted"))
+    if single:
+        section.finding(NA, "Risk from the top name, typical day", "one name",
+                        "One name carries all of the book's risk; the largest position says so.", key="risk_conc")
+        return section if not section.empty else None
     _concentration_finding(section, path, crowding)
 
     held = crowding.dropna()
@@ -90,9 +98,9 @@ def build_risk_over_time(returns: pd.Series, holdings: pd.DataFrame, bars) -> Se
         facts = pd.Series({
             "Average names held": f"{held['held'].mean():.1f}",
             "Average effective names": f"{held['effective'].mean():.1f}",
-            "Lowest effective names": f"{held['effective'].min():.1f} ({held['effective'].idxmin():%-d %b %Y})",
+            "Lowest effective names": f"{held['effective'].min():.1f} ({held['effective'].idxmin():{DATE_FORMAT}})",
             "Average top-3 share": f"{held['top3'].mean():.0%}",
-            "Largest single weight": f"{held['largest'].max():.0%} ({held['largest'].idxmax():%-d %b %Y})",
+            "Largest single weight": f"{held['largest'].max():.0%} ({held['largest'].idxmax():{DATE_FORMAT}})",
         })
         section.table(Table(facts.to_frame("Value"), None), title="Concentration", first_header="Measure")
         section.side.append(
@@ -136,7 +144,10 @@ def _concentration_finding(section: Section, path: pd.DataFrame, crowding: pd.Da
                             f"{typical:.0%} (most often {leader})",
                             f"On a typical day the riskiest name carried {typical:.0%} of the book's predicted "
                             f"volatility, {leader} more often than any other. A position can be a modest weight "
-                            f"and still most of the risk. Over {TOP_RISK_SHARE:.0%} needs a look.", key="risk_conc")
+                            f"and still most of the risk. Over {TOP_RISK_SHARE:.0%} needs a look.", key="risk_conc",
+                            threshold=f"at most {TOP_RISK_SHARE:.0%} of the risk",
+                            issue=f"one name, most often {leader}, carries {typical:.0%} of the risk",
+                            advice=CONCENTRATION_ADVICE)
             return
     effective = crowding["effective"].dropna()
     if len(effective):
@@ -144,17 +155,42 @@ def _concentration_finding(section: Section, path: pd.DataFrame, crowding: pd.Da
         section.finding(OK if typical >= MIN_EFFECTIVE_NAMES else WARN, "Effective number of names, typical day",
                         f"{typical:.1f}", "Ten equal positions count as ten, one large and nine small as barely more "
                         f"than one. Without the bars to measure risk, fewer than {MIN_EFFECTIVE_NAMES} needs a look.",
-                        key="risk_conc")
+                        key="risk_conc", threshold=f"at least {MIN_EFFECTIVE_NAMES}",
+                        issue=f"the book is {typical:.1f} effective names", advice=CONCENTRATION_ADVICE)
 
 
-def _forecast(section: Section, returns: pd.Series, path: pd.DataFrame) -> None:
+def realized_while_invested(returns: pd.Series, holdings: pd.DataFrame, window: int = REALIZED_WINDOW,
+                            minimum: int = REALIZED_WINDOW // 2) -> pd.Series:
+    """For each session, the strategy's annualised volatility over the next ``window`` sessions it was invested.
+
+    A session counts when the book held positions at the close before it --
+    the days its return came from positions, not from cash. The prediction is
+    the risk of the positions held; counting the days in cash after an exit
+    would compare it with a volatility diluted by zeros, and read as a
+    forecast twice too high.
+    """
+    book = holdings.sum(axis="columns")
+    gross = holdings.drop(columns="cash", errors="ignore").abs().sum(axis="columns")
+    invested = ((gross / book.where(book > 0)).fillna(0.0).shift(1).fillna(0.0) > 0).reindex(returns.index,
+                                                                                               fill_value=False)
+    values, mask = returns.to_numpy(dtype=float), invested.to_numpy()
+    realized = np.full(len(values), np.nan)
+    for position in range(len(values)):
+        ahead = values[position + 1:position + 1 + window][mask[position + 1:position + 1 + window]]
+        if len(ahead) >= minimum:
+            realized[position] = ahead.std(ddof=1) * np.sqrt(252)
+    return pd.Series(realized, index=returns.index)
+
+
+def _forecast(section: Section, returns: pd.Series, path: pd.DataFrame, holdings: pd.DataFrame) -> None:
     """Predicted volatility against what the next month delivered."""
-    realized = (returns.rolling(REALIZED_WINDOW).std() * np.sqrt(252)).shift(-(REALIZED_WINDOW - 1))
+    realized = realized_while_invested(returns, holdings)
     compared = pd.DataFrame({"predicted": path["predicted"], "realized": realized}).dropna()
     if compared.empty:
         return
     ratio = compared["realized"] / compared["predicted"]
     facts = pd.Series({
+        "Days compared": f"{len(compared):,}",
         "Average predicted volatility": f"{compared['predicted'].mean():.1%}",
         "Average realized volatility": f"{compared['realized'].mean():.1%}",
         "Bias (realized / predicted)": f"{ratio.mean():.2f}",
@@ -165,10 +201,12 @@ def _forecast(section: Section, returns: pd.Series, path: pd.DataFrame) -> None:
     section.side.append(
         f'<p class="explain"><b>Predicted</b> is the volatility the book carried each morning: that '
         f'day\'s weights times the covariance of its names over the previous {COVARIANCE_WINDOW} '
-        f'sessions. <b>Realized</b> is the strategy\'s volatility over the next {REALIZED_WINDOW}. A '
-        'bias near 1 and a high correlation mean the strategy\'s risk was what its positions said it '
-        'was; a bias well above 1 means risk arrived that the positions did not show -- crowded '
-        'names, regime changes, gaps.</p>')
+        f'sessions. <b>Realized</b> is the strategy\'s volatility over the next {REALIZED_WINDOW} sessions '
+        f'it held positions -- days in cash are left out, as the prediction is the risk of the positions. '
+        'A bias near 1 and a high correlation mean the strategy\'s risk was what its positions said it '
+        'was. Well above 1, risk arrived that the positions did not show -- crowded names, regime changes, '
+        'gaps. Well below 1, the positions were calmer than their history: the strategy tends to hold '
+        'them after a volatile stretch, as a breakout entry does.</p>')
 
     def draw(ax):
         # On every session, so a stretch the book spent in cash is a gap, not a straight line.

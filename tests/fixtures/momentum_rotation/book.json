@@ -1,0 +1,45 @@
+{
+ "cost_settings": {
+  "capital": 1000000,
+  "commission_min_trade_cost": 0.0,
+  "commission_model": "per_dollar",
+  "commission_per_share": 0.001,
+  "commission_rate": 0.000354,
+  "price_used_in_order_execution": "close",
+  "same_bar_execution": true,
+  "slippage_basis_points": 5.0,
+  "slippage_volume_limit": 0.1
+ },
+ "currency": "USD",
+ "listings": [
+  "AAPL@XNGS",
+  "MSFT@XNGS",
+  "NVDA@XNGS",
+  "AMZN@XNGS",
+  "GOOGL@XNGS",
+  "META@XNGS",
+  "JPM@XNYS",
+  "XOM@XNYS",
+  "JNJ@XNYS",
+  "WMT@XNGS"
+ ],
+ "reported": {
+  "closed_trades": 76,
+  "commission": "17878.23",
+  "final_nav": "2401803.33",
+  "realized": "1331747.37",
+  "slippage_reconstructed": "25251.50",
+  "unrealized": "87934.19"
+ },
+ "sector_mappings": {
+  "AAPL": "Group A",
+  "AMZN": "Group C",
+  "GOOGL": "Group B",
+  "JNJ": "Group D",
+  "JPM": "Group E",
+  "META": "Group B",
+  "MSFT": "Group A",
+  "NVDA": "Group A",
+  "XOM": "Group F"
+ }
+}

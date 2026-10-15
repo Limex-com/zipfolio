@@ -35,7 +35,7 @@ pyfolio and skfolio are imported when a page is built, not on import: a host
 without skfolio loses that one section, not the report.
 """
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 from .currency import CURRENCIES  # noqa: E402
 from .factors import market_factors, risk_free_returns, ruonia  # noqa: E402

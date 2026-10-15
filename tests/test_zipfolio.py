@@ -5,6 +5,8 @@ draws one HTML page from what they compute. The shaping is tested without
 pyfolio; the page needs it installed, and its risk section needs skfolio.
 """
 
+import json
+import re
 import types
 
 import numpy as np
@@ -40,6 +42,12 @@ def no_factor_download(monkeypatch):
     except ImportError:
         return
     monkeypatch.setattr(factor_analysis, "fama_french_daily", lambda model="ff5_mom": synthetic_factors())
+
+
+def untagged(text: str) -> str:
+    """Page HTML without the hints on terms and the classes on cells, for matching a table's text."""
+    text = re.sub(r'<span class="term"[^>]*>(.*?)</span>', r"\1", text)
+    return text.replace('<td class="n">', "<td>")
 
 
 def session_closes(start="2023-01-03", end="2023-12-29"):
@@ -208,13 +216,16 @@ def test_a_traded_backtest_gets_every_section(pyfolio, tmp_path):
 
     assert [name for name in built if name != "Portfolio Risk"] == [
         "Performance", "Profit Concentration", "Instruments", "Long and Short", "Factor Analysis",
-        "Drawdowns", "Market Regimes", "Risk Over Time",
+        "Drawdowns", "Market Regimes", "CAPM and the Efficient Frontier", "Risk Over Time",
         "Positions", "Transactions", "Closed Trades",
         "Trading Costs"], "page order: returns, risk, the book, then whether it can be traded"
     page = output.read_text(encoding="utf-8")
     assert "Key Performance Metrics" in page and "Annual return" in page, (
         "the perf stats table was caught at print_table and rendered in the page's own style")
-    assert page.count("<svg") >= 15, "every chart is a figure of its own"
+    charts = page.count('<div class="chart">')
+    assert charts >= 15, "every chart is a figure of its own"
+    assert page.count('<div class="chart"><div class="ichart"') == charts, "and every one of them interactive"
+    assert "echarts" in page, "with the library inlined: the page needs no network"
     assert "could not be computed" not in page
     assert "#6b9e00" in page, "the strategy is drawn in QuantStats Pro's colour"
 
@@ -231,7 +242,7 @@ def test_a_backtest_that_never_traded_still_gets_its_returns(pyfolio, tmp_path):
 
     assert [name for name in built if name != "Portfolio Risk"] == [
         "Performance", "Profit Concentration", "Factor Analysis"]
-    assert "Benchmark: none" in output.read_text(encoding="utf-8"), (
+    assert "<dt>Benchmark</dt><dd>none</dd>" in output.read_text(encoding="utf-8"), (
         "the zeros a run without a benchmark is handed are not a benchmark"
     )
 
@@ -247,8 +258,8 @@ def test_performance_is_only_what_quantstats_does_not_already_show(pyfolio, tmp_
 
     assert "Stress Events" not in built
     page = output.read_text(encoding="utf-8")
-    performance = page.split("<h2>Performance</h2>")[1].split("</section>")[0]
-    assert performance.count("<svg") == 2, "cumulative returns and the underwater curve"
+    performance = page.split('id="performance"')[1].split("</section>")[0]
+    assert performance.count('<div class="chart">') == 2, "cumulative returns and the underwater curve"
     assert "Key Performance Metrics" in performance
     for repeated in ("Rolling Sharpe", "Rolling Volatility", "Rolling Beta", "Monthly Returns (%)",
                      "EOY Returns", "Return Quantiles", "Volatility Matched", "Log Scaled",
@@ -279,7 +290,7 @@ def test_sector_analysis_and_capacity_when_sectors_and_bars_are_given(pyfolio, t
     page = output.read_text(encoding="utf-8")
     assert "Information Technology" in page
     assert UNCLASSIFIED in page, "a held name with no sector is filed, not dropped"
-    assert "Fills Over 5% of Daily Volume" in page, (
+    assert "Fills Over 1% of Daily Volume" in page, (
         "two names filled on the same day: pyfolio's own join fails on exactly that")
     assert "could not be computed" not in page
 
@@ -297,12 +308,12 @@ def test_no_sector_section_when_no_held_name_has_a_sector(pyfolio, tmp_path):
 
 
 def test_a_failing_section_leaves_a_note_and_no_traceback_on_the_page(pyfolio, monkeypatch, tmp_path):
-    from pyfolio import txn
+    from zipfolio.sections import transactions
 
     def broken(*args, **kwargs):
         raise RuntimeError("pyfolio fell over")
 
-    monkeypatch.setattr(txn, "get_turnover", broken)
+    monkeypatch.setattr(transactions, "trading_activity", broken)
     closes = session_closes()
     returns, records, cash, fills = a_traded_book(closes)
     output = tmp_path / "zipfolio.html"
@@ -506,7 +517,7 @@ def test_portfolio_risk_measures_contribution_and_alternatives(pyfolio, skfolio,
 
     assert "Portfolio Risk" in built
     page = output.read_text(encoding="utf-8")
-    for heading in ("Risk Measures", "CVaR 95% (daily)", "CDaR 95%", "Ulcer index", "Rolling Tail Risk",
+    for heading in ("Risk Measures", "CVaR 95%, daily (historical)", "CDaR 95%", "Ulcer index", "Rolling Tail Risk",
                     "Risk Contribution", "Same Names, Other Allocations", "Equal Weighted"):
         assert heading in page, heading
     assert "skfolio" in page, "the footer credits the library"
@@ -571,7 +582,7 @@ def test_the_instruments_section_breaks_returns_down_by_name(pyfolio, tmp_path):
 
     assert built.index("Instruments") < built.index("Positions"), "what each name earned comes with the returns"
     page = output.read_text(encoding="utf-8")
-    section = page.split("<h2>Instruments</h2>")[1].split("</section>")[0]
+    section = page.split('id="instruments"')[1].split("</section>")[0]
     for heading in ("Returns by Instrument", "Contribution to Return by Instrument",
                     "Cumulative PnL by Instrument", "Contribution by Instrument and Year",
                     "Daily Returns by Instrument", "Trade Returns by Instrument", "Win Rate"):
@@ -678,7 +689,7 @@ def test_factor_betas_are_recovered(pyfolio):
 
     import re
 
-    table = section.side[0]
+    table = untagged(section.side[0])
     assert "Fama-French 5 factors + momentum" in table
 
     def beta(name):
@@ -687,7 +698,9 @@ def test_factor_betas_are_recovered(pyfolio):
     assert beta("Mkt-RF") == pytest.approx(1.2, abs=0.03)
     assert beta("SMB") == pytest.approx(0.5, abs=0.03)
     assert abs(beta("HML")) < 0.05
-    assert len(section.charts) == 4, "exposures, rolling betas, decomposition, attribution by year"
+    assert len(section.charts) == 5, "exposures, rolling betas, the style box, decomposition, attribution by year"
+    style = next(f for f in section.findings if f.key == "style")
+    assert style.value == "Mid Blend", "SMB 0.5 is mid-sized companies; no HML is neither value nor growth"
 
 
 def test_factor_analysis_says_so_when_the_data_cannot_be_had(pyfolio, monkeypatch):
@@ -773,7 +786,7 @@ def test_trading_activity_describes_how_the_strategy_trades():
     activity = trading_activity(daily_returns(returns), frame, turnover)
 
     assert activity["Median sessions between trading days"] == "5", "the book rebalances every fifth session"
-    assert activity["Annual turnover"] == "1260%"
+    assert activity["Turnover, a year (traded / portfolio)"] == "12.6×"
     for row in ("Buys", "Sells", "Avg. fill value", "Largest fill", "Avg. symbols per trading day"):
         assert row in activity.index
 
@@ -877,7 +890,7 @@ def test_the_market_model_keeps_the_rate_out_of_alpha(pyfolio):
 
     import re
 
-    table = section.side[0]
+    table = untagged(section.side[0])
     assert "Market model: IMOEX over RUONIA" in table
     beta = float(re.search(r"<td>Mkt-RF</td><td>(-?[\d.]+)</td>", table).group(1))
     alpha = float(re.search(r"<td>Alpha \(annualized\)</td><td>(-?[\d.]+)%</td>", table).group(1))
@@ -936,7 +949,9 @@ def test_a_rouble_report(pyfolio, tmp_path):
     page = output.read_text(encoding="utf-8")
     assert "Market model: IMOEX over RUONIA" in page
     assert "\u20bd" in page and "Traded value" in page
-    assert "100m \u20bd capital base" in page
+    import re
+
+    assert re.search(r"position at [\d.,]+[km]? \u20bd, taking at most", page), "capacity at the book's own capital"
 
 
 # ----------------------------------------------------------------------------
@@ -1013,7 +1028,15 @@ def test_effective_number_of_names():
 # The page's structure: four parts, contents, and a summary of the findings.
 # ----------------------------------------------------------------------------
 
+def scorecard_rows(summary: str) -> list[str]:
+    """The verdicts of the scorecard's rows -- a family is one row -- in page order."""
+    import re
+
+    return re.findall(r'<tr class="(?:family )?(ok|warn|bad|na)">', summary)
+
+
 def test_the_page_is_four_parts_with_contents_and_a_summary(pyfolio, tmp_path):
+    import json
     import re
 
     closes = session_closes()
@@ -1021,28 +1044,39 @@ def test_the_page_is_four_parts_with_contents_and_a_summary(pyfolio, tmp_path):
     benchmark = pd.Series(np.random.default_rng(1).normal(0.0003, 0.009, len(closes)), index=closes)
     output = tmp_path / "zipfolio.html"
 
-    build_tearsheet(output, returns, benchmark, records, cash, fills, orders=orders_for(fills))
+    build_tearsheet(output, returns, benchmark, records, cash, fills, orders=orders_for(fills),
+                    run_info={"Strategy": "Two names, weekly"})
 
     page = output.read_text(encoding="utf-8")
     parts = re.findall(r'<span class="part-name">([^<]+)</span>', page)
     assert parts == ["Where the Return Came From", "What It Risked", "How It Holds and Trades",
                      "Can It Be Traded"]
     assert page.index('id="summary"') < page.index('id="part-1"'), "the summary comes before the parts"
+    assert '<details class="part" id="part-1" open>' in page, "the parts start open, under their verdicts"
+    assert '<a class="totop" href="#summary"' in page, "and the way back to the summary floats beside them"
     ids = set(re.findall(r'id="([^"]+)"', page))
     links = set(re.findall(r'href="#([^"]+)"', page))
     assert links <= ids, f"every link lands somewhere: {links - ids}"
+    assert "<dt>Strategy</dt><dd>Two names, weekly</dd>" in page, "the caller's facts are in the header"
     summary = page.split('id="summary"')[1].split("</section>")[0]
-    assert ">Score<" in summary
-    rows = re.findall(r'<span class="badge (\w+)">', summary)
-    assert len(rows) == 16, "always the same sixteen checks"
-    assert rows.count("na") <= 4, "a traded book with orders fills most of them"
+    assert ">Score<" in summary and 'class="verdict"' in summary
+    rows = scorecard_rows(summary)
+    assert len(rows) == 16, "always the same sixteen rows, a family of checks one row"
+    counted = [row for row in rows if row != "na"]
     passed = re.search(r'<div class="n">(\d+)/(\d+)</div>', summary)
-    assert (int(passed.group(1)), int(passed.group(2))) == (rows.count("ok"), len(rows)), "the score counts the rows"
+    assert (int(passed.group(1)), int(passed.group(2))) == (counted.count("ok"), len(counted)), (
+        "the score counts the rows that could be judged")
     assert 'href="#trading-costs"' in summary and 'href="#closed-trades"' in summary
-    assert "For context:" in summary, "facts that are not verdicts go on one line"
+    assert "<b>Threshold:</b>" in summary, "every verdict says what it was held against, when opened"
+    assert "In the market" in summary, "time in the market is at a glance"
+    assert "How to read this section" in page, "explanations wait behind a toggle"
     trades = page.split('id="closed-trades"')[1].split("</section>")[0]
     assert "What Counts as a Trade" in trades and "two trades" in trades, "a round trip is explained, with examples"
     assert "round_trips" not in trades and "Round Trip" not in trades, "pyfolio's jargon is not shown"
+    data = json.loads(re.search(r'<script type="application/json" id="zipfolio-scorecard">(.*?)</script>',
+                                page, re.S).group(1).replace("<\\/", "</"))
+    assert data["score"]["counted"] == len(counted) and len(data["checks"]) == 16, "the scorecard is data too"
+    assert data["run"]["Strategy"] == "Two names, weekly"
 
 
 def test_a_failed_section_says_nothing_in_the_summary(pyfolio):
@@ -1051,13 +1085,33 @@ def test_a_failed_section_says_nothing_in_the_summary(pyfolio):
     broken = Section("Execution", failed=True)
     broken.finding(BAD, "should not show", "-")
     fine = Section("Trading Costs")
-    fine.finding(BAD, "Costs ate it", "90%", key="costs")
+    fine.finding(BAD, "Costs ate it", "90%", key="costs", issue="costs ate the profit")
     fine.finding(BAD, "Not on the card", "-")
     html = summary_html(ordered([broken, fine]))
     assert "Costs ate it" in html and "should not show" not in html
-    assert ">0/16<" in html, "the score counts out of sixteen whatever could be checked"
-    assert html.count('class="badge na"') == 15
-    assert "Not on the card" in html.split("For context:")[1], "a finding outside the sixteen is context"
+    assert ">0/1<" in html, "a check that could not be made is N/A and out of the count"
+    assert html.count('<tr class="na">') + html.count('<tr class="family na">') == 15
+    assert "Main issues: costs ate the profit." in html, "the verdict names the issue in words"
+    assert "Not on the card" not in html, "a finding outside the scorecard stays in its section"
+
+
+def test_a_family_counts_once_with_its_worst_verdict(pyfolio):
+    from zipfolio.page import BAD, NA, OK, WARN, Section, ordered, scorecard, summary_html
+
+    section = Section("Profit Concentration")
+    section.finding(WARN, "Total return without the best 5 days", "20% → 2%", key="best_days")
+    section.finding(BAD, "Profit from the best 5 trades", "170%", key="best_trades")
+    section.finding(OK, "Total return without the best 10 days", "4%", key="best_days")
+    positions = Section("Positions")
+    positions.finding(WARN, "Largest position, typical day", "100%", key="largest")
+    positions.finding(NA, "Profit from the top 2 names", "one name", "One name traded.", key="top_names")
+    rows, _, _ = scorecard(ordered([section, positions]))
+    by_key = {row.key: row for row in rows}
+    assert by_key["few_events"].status == BAD, "the worst of three"
+    assert by_key["concentration"].status == WARN, "N/A members do not count"
+    html = summary_html(ordered([section, positions]))
+    assert ">0/2<" in html, "two families, two rows -- not five"
+    assert "One name traded." in html, "an N/A member says why"
 
 
 # ----------------------------------------------------------------------------
@@ -1311,11 +1365,12 @@ def test_risk_and_book_parts_carry_several_checks(pyfolio, tmp_path):
 
     summary = output.read_text(encoding="utf-8").split('id="summary"')[1].split("</table>")[0]
     parts = re.split(r'<tr class="grp">', summary)[1:]
-    by_part = {re.search(r'&middot; ([^<]+)</a>', part).group(1): part.count('class="badge') for part in parts}
-    assert set(by_part.values()) == {4}, by_part
+    by_part = {re.search(r'&middot; ([^<]+)</a>', part).group(1): len(scorecard_rows(part)) for part in parts}
+    assert by_part == {"Where the Return Came From": 4, "What It Risked": 4, "How It Holds and Trades": 4,
+                       "Can It Be Traded": 4}, by_part
     risk = summary.split("What It Risked")[1].split("How It Holds")[0]
-    assert risk.count("badge na") == 1 and "Largest sector" in risk.split("badge na")[0].rsplit("<tr", 1)[1], (
-        "without a sector table only the sector check is N/A")
+    sector = risk.split("Largest sector")[0].rsplit("<li>", 1)[1]
+    assert 'badge na' in sector, "without a sector table the sector check is N/A"
 
 
 def test_sector_and_risk_concentration_are_on_the_card(pyfolio, tmp_path):
@@ -1335,3 +1390,613 @@ def test_sector_and_risk_concentration_are_on_the_card(pyfolio, tmp_path):
     summary = output.read_text(encoding="utf-8").split('id="summary"')[1].split("</table>")[0]
     assert "Largest sector, typical day" in summary and "Information Technology" in summary
     assert "Risk from the top name" in summary or "Effective number of names" in summary
+
+
+# ----------------------------------------------------------------------------
+# 0.3: the review of the AAPL report -- reconciled next-bar book, turnover on the
+# portfolio, outside-bar fills by direction, significance, partial months, one name.
+# ----------------------------------------------------------------------------
+
+def test_the_next_bar_book_differs_by_exactly_the_sum_over_the_fills(pyfolio):
+    """Added, not compounded: the money a better price saves is kept, not reinvested."""
+    from zipfolio.sections.next_bar_fills import next_bar_returns, repriced_fills
+
+    returns, holdings, fills, bars = next_bar_inputs(gap=-0.01)
+    priced = repriced_fills(fills, bars).dropna(subset=["impact"])
+    priced = priced[priced["next_date"].dt.normalize().isin(returns.index)]
+    alternative = next_bar_returns(returns, holdings, priced)
+
+    start = holdings.sum(axis="columns").iloc[0] / (1 + returns.iloc[0])
+    final, waited = holdings.sum(axis="columns").iloc[-1], start * (1 + alternative).prod()
+    assert priced["impact"].sum() > 0, "a cheaper next open is a gain"
+    assert waited - final == pytest.approx(priced["impact"].sum())
+
+
+def test_the_wait_that_helps_is_a_gain_with_a_plus_sign(pyfolio):
+    from zipfolio.page import OK
+    from zipfolio.sections.next_bar_fills import build_next_bar_fills
+
+    returns, holdings, fills, bars = next_bar_inputs(gap=-0.01)
+    section = build_next_bar_fills(returns, holdings, fills, bars, {"same_bar_execution": True})
+    side = "".join(section.side)
+    assert section.findings[0].status == OK
+    assert "Effect of waiting on PnL" in side and "(a gain)" in side and "+$" in side
+    assert "= the sum over the fills" in side, "the reconciliation is on the page"
+
+
+def test_buying_the_whole_portfolio_once_is_a_turnover_of_one():
+    """pyfolio's average-gross-book denominator made it two: half a book on the day it was bought."""
+    from zipfolio.sections.transactions import daily_turnover
+
+    days = pd.date_range("2024-03-01", periods=3, tz="UTC")
+    positions = pd.DataFrame({"A": [0.0, 1_000.0, 1_000.0], "cash": [1_000.0, 0.0, 0.0]}, index=days)
+    fills = pd.DataFrame({"amount": [10.0], "price": [100.0], "symbol": ["A"]},
+                         index=pd.DatetimeIndex([days[1] + pd.Timedelta(hours=20)]))
+    assert daily_turnover(fills, positions).tolist() == [0.0, 1.0, 0.0]
+
+
+def test_fills_outside_their_bar_are_judged_by_whom_they_favour():
+    from zipfolio.page import BAD, OK
+    from zipfolio.sections.execution import _range_check, outside_effect
+
+    def fills(price, amount):
+        return pd.DataFrame({"price": [price], "amount": [amount], "value": [abs(price * amount)],
+                             "bar_high": [100.0], "bar_low": [90.0],
+                             "above_high": [price > 100.0], "below_low": [price < 90.0]})
+
+    against = fills(100.05, 1_000)  # a buy pushed past a bar that closed at its high
+    assert outside_effect(against) == (1, 0.0, pytest.approx(50.0))
+    assert _range_check(against, {"capital": 1_000_000})[0] == OK, "it only cost the strategy, a little"
+
+    flattering = fills(101.0, -10_000)  # a sell above the high: paid a price no one traded at
+    assert outside_effect(flattering) == (1, pytest.approx(10_000.0), 0.0)
+    assert _range_check(flattering, {"capital": 1_000_000})[0] == BAD
+
+
+def test_the_best_of_many_noise_strategies_sets_the_bar():
+    from zipfolio.sections.performance import sharpe_inference
+
+    returns = pd.Series(np.random.default_rng(5).normal(0.0004, 0.01, 752))
+    stats = sharpe_inference(returns)
+    assert stats["noise"][5] == pytest.approx(0.69, abs=0.01), "five tries of three years of noise reach ~0.69"
+    assert stats["noise"][5] < stats["noise"][10] < stats["noise"][50]
+    assert stats["deflated"][50] < stats["deflated"][5] < stats["psr"], "every try raises the bar"
+    assert stats["low"] < stats["sharpe"] < stats["high"]
+
+
+def test_a_partial_first_and_last_month_are_left_out():
+    from zipfolio.sections.market_regimes import monthly_regimes
+
+    days = pd.bdate_range("2023-10-20", "2024-06-07", tz="UTC")
+    market = pd.Series(np.random.default_rng(3).normal(0, 0.01, len(days)), index=days)
+    monthly = monthly_regimes(market * 0.5, market)
+    assert str(monthly.index[0]) == "2023-11" and str(monthly.index[-1]) == "2024-05"
+    assert monthly.attrs["partial"] == ["Oct 2023 (8 sessions)", "Jun 2024 (5 sessions)"]
+
+
+def test_one_name_gets_no_breakdown_by_name(pyfolio, tmp_path):
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    keep = fills["symbol"] == "AAPL@XNAS"
+    records = records[records["symbol"] == "AAPL@XNAS"]
+    output = tmp_path / "zipfolio.html"
+    built = build_tearsheet(output, returns, None, records, cash, fills[keep],
+                            sector_mappings={"AAPL@XNAS": "Information Technology"})
+
+    assert "Instruments" not in built and "Sector Analysis" not in built
+    page = output.read_text(encoding="utf-8")
+    summary = page.split('id="summary"')[1].split("</table>")[0]
+    assert "AAPL@XNAS, the only name" in summary, "the concentration row says it was one name"
+    top_two = summary.split("Profit from the top 2 names")[0].rsplit("<li>", 1)[1]
+    assert "badge na" in top_two, "the top two names of one name is not a check"
+
+
+def test_charts_carry_a_title_and_no_metadata(pyfolio):
+    from zipfolio.style import chart
+
+    svg = chart("A Line", lambda ax: ax.plot([0, 1], [0, 1]))
+    assert svg.startswith("<svg") and "<title>A Line</title>" in svg[:400]
+    assert "<metadata>" not in svg and "Matplotlib v" not in svg and "image/svg+xml" not in svg
+    assert svg == chart("A Line", lambda ax: ax.plot([0, 1], [0, 1])), "the same chart, the same SVG"
+
+
+# ----------------------------------------------------------------------------
+# Interactive charts: matplotlib read back into ECharts.
+# ----------------------------------------------------------------------------
+
+def _option(draw, height=3.0):
+    import matplotlib.pyplot as plt
+
+    from zipfolio.interactive import option_for
+    from zipfolio.style import declutter
+
+    figure, axis = plt.subplots(figsize=(8, height))
+    try:
+        draw(axis)
+        declutter(figure)
+        return option_for(figure, axis, "A Chart", height)
+    finally:
+        plt.close(figure)
+
+
+def test_a_dated_line_becomes_a_line_on_a_time_axis(pyfolio):
+    days = pd.date_range("2024-01-01", periods=30, freq="D")
+    option, height = _option(lambda ax: (ax.plot(days, np.linspace(1, 2, 30), label="Strategy"),
+                                         ax.axhline(1.0, ls="--"), ax.legend()))
+    assert option["xAxis"]["type"] == "time" and option["tooltip"]["trigger"] == "axis"
+    line = next(s for s in option["series"] if s["type"] == "line" and s["data"])
+    assert line["name"] == "Strategy" and line["data"][0] == [1704067200000, 1.0], "epoch milliseconds"
+    assert any(s.get("markLine") for s in option["series"]), "the reference line"
+    assert option["legend"]["data"] == ["Strategy"] and "dataZoom" in option and height > 3 * 77
+
+
+def test_bars_keep_their_geometry_and_say_their_value(pyfolio):
+    option, _ = _option(lambda ax: ax.barh(["A", "B"], [0.2, -0.1]))
+    bars = next(s for s in option["series"] if s.get("zf", {}).get("kind") == "rect")
+    assert sorted(item[1] for item in bars["data"]) == pytest.approx([-0.1, 0.2])
+    assert any("B" in tip and "-0.1" in tip for tip in bars["zfTips"]), bars["zfTips"]
+    assert option["yAxis"]["axisLabel"]["zfLabels"] == [[0.0, "A"], [1.0, "B"]], "the names on their ticks"
+
+
+def test_a_filled_area_is_read_back_into_its_curves():
+    from zipfolio.interactive import _two_curves
+
+    import matplotlib.pyplot as plt
+
+    figure, axis = plt.subplots()
+    collection = axis.fill_between([0, 1, 2, 3], [1, 3, 2, 4], 0)
+    polygon = collection.get_paths()[0].to_polygons()[0]
+    curves = _two_curves(polygon)
+    plt.close(figure)
+    assert list(curves["top"]) == [1, 3, 2, 4] and list(curves["bottom"]) == [0, 0, 0, 0]
+
+
+def test_a_heatmap_keeps_its_cells_and_numbers(pyfolio):
+    import seaborn as sns
+
+    frame = pd.DataFrame([[1.0, -2.0], [3.0, 4.0]], index=["A", "B"], columns=["2024", "2025"])
+    option, _ = _option(lambda ax: sns.heatmap(frame, annot=True, fmt=".1f", cbar=False, ax=ax))
+    cells = next(s for s in option["series"] if s.get("zf", {}).get("kind") == "rect")
+    assert len(cells["data"]) == 4 and sorted(cells["zf"]["labels"]) == ["-2.0", "1.0", "3.0", "4.0"]
+    assert option["yAxis"]["inverse"], "a heatmap reads top down"
+
+
+def test_an_image_stays_a_static_chart(pyfolio):
+    from zipfolio.interactive import INTERACTIVE
+    from zipfolio.style import chart
+
+    token = INTERACTIVE.set(True)
+    try:
+        moving = chart("Line", lambda ax: ax.plot([0, 1], [0, 1]))
+        still = chart("Image", lambda ax: ax.imshow([[0, 1], [1, 0]]))
+    finally:
+        INTERACTIVE.reset(token)
+    assert moving.startswith('<div class="ichart"') and still.startswith("<svg")
+
+
+def test_static_charts_on_request(pyfolio, tmp_path):
+    closes = session_closes()
+    returns = pd.Series(np.random.default_rng(5).normal(0, 0.01, len(closes)), index=closes)
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, returns, None, interactive=False)
+    page = output.read_text(encoding="utf-8")
+    assert 'class="ichart"' not in page and "echarts" not in page and '<div class="chart"><svg' in page
+
+
+# ----------------------------------------------------------------------------
+# The style box and the sector heatmap.
+# ----------------------------------------------------------------------------
+
+def test_the_style_box_reads_size_from_smb_and_style_from_hml():
+    from zipfolio.sections.factor_analysis import style_of
+
+    assert style_of(-0.15, 0.0) == "Large Blend", "where the S&P 500 sits"
+    assert style_of(0.85, 0.4) == "Small Value"
+    assert style_of(0.3, -0.35) == "Mid Growth"
+
+
+def test_a_us_book_gets_a_style_box_and_its_style_at_a_glance(pyfolio, tmp_path):
+    closes = session_closes("2022-01-03", "2023-12-29")
+    returns, records, cash, fills = a_traded_book(closes)
+    benchmark = pd.Series(np.random.default_rng(1).normal(0.0003, 0.009, len(closes)), index=closes)
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, returns, benchmark, records, cash, fills)
+    page = output.read_text(encoding="utf-8")
+    factors = page.split('id="factor-analysis"')[1].split("</section>")[0]
+    assert 'aria-label="Style Box"' in factors
+    assert "Whole backtest: <b>" in factors, "the point says its cell when hovered"
+    summary = page.split('id="summary"')[1].split("</table>")[0]
+    assert re.search(r"<div class=\"k\">Style</div><div class=\"fv info\">(Large|Mid|Small) (Value|Blend|Growth)",
+                     untagged(summary))
+
+
+def test_the_treemap_sizes_by_capital_and_colours_by_contribution(pyfolio):
+    from zipfolio.inputs import daily_returns, positions_in_dollars, transactions_frame
+    from zipfolio.sections.instruments import instrument_pnl
+    from zipfolio.sections.sector_analysis import TILE_SCALE, tile_color, treemap_frame
+
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    daily = daily_returns(returns)
+    holdings = positions_in_dollars(records, cash, daily.index)
+    transactions = transactions_frame(fills)
+    frame = treemap_frame(daily, holdings, transactions, None, {"AAPL@XNAS": "Information Technology"})
+
+    assert set(frame.index) == {"AAPL@XNAS", "MSFT@XNAS"}
+    assert set(frame["sector"]) == {"Information Technology", UNCLASSIFIED}
+    book = holdings.sum(axis="columns")
+    gross = holdings.drop(columns="cash").abs().sum(axis="columns") / book
+    assert frame["weight"].sum() == pytest.approx(gross.mean()), "the tiles add up to the average gross exposure"
+    start = book / (1 + daily)
+    assert frame["contribution"].sum() == pytest.approx(
+        instrument_pnl(holdings, transactions).sum(axis="columns").div(start).sum())
+    assert tile_color(-1.0, 0.1) == TILE_SCALE[0][1] and tile_color(1.0, 0.1) == TILE_SCALE[-1][1]
+    assert tile_color(0.0, 0.1) == TILE_SCALE[3][1], "nothing made is dark grey"
+
+
+def test_squarified_tiles_fill_the_space_in_proportion():
+    from zipfolio.sections.sector_analysis import squarify
+
+    tiles = squarify([6, 6, 4, 3, 2, 2, 1], 0, 0, 6, 4)
+    areas = [w * h for _, _, w, h in tiles]
+    assert sum(areas) == pytest.approx(24.0)
+    assert areas == pytest.approx([6, 6, 4, 3, 2, 2, 1])
+    assert all(0 <= x and x + w <= 6 + 1e-9 and 0 <= y and y + h <= 4 + 1e-9 for x, y, w, h in tiles)
+
+
+def test_the_treemap_is_drawn_both_ways(pyfolio, tmp_path):
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    sectors = {"AAPL@XNAS": "Information Technology", "MSFT@XNAS": "Information Technology"}
+    for interactive in (True, False):
+        output = tmp_path / f"zipfolio_{interactive}.html"
+        build_tearsheet(output, returns, None, records, cash, fills, sector_mappings=sectors, interactive=interactive)
+        page = output.read_text(encoding="utf-8").split('id="sector-analysis"')[1].split("</section>")[0]
+        if interactive:
+            assert '"type":"treemap"' in page and "Average weight:" in page, "tiles with their numbers on hover"
+        else:
+            assert "<title>Where the Capital Went and What It Made</title>" in page
+
+
+# ----------------------------------------------------------------------------
+# CAPM and the efficient frontier: a map, not a check.
+# ----------------------------------------------------------------------------
+
+def test_capm_measures_follow_the_model():
+    from zipfolio.sections.capm import _point
+
+    days = pd.bdate_range("2022-01-03", periods=500, tz="UTC")
+    rng = np.random.default_rng(5)
+    market = pd.Series(rng.normal(0.0005, 0.01, len(days)), index=days)
+    rf = pd.Series(0.0001, index=days)
+    strategy = rf + 0.5 * (market - rf) + 0.0002 + pd.Series(rng.normal(0, 0.004, len(days)), index=days)
+
+    point = _point("Strategy", strategy, market, rf)
+    bench = _point("Market", market, market, rf)
+
+    assert point.beta == pytest.approx(0.5, abs=0.03)
+    assert bench.beta == pytest.approx(1.0)
+    alpha = point.mean - (0.0252 + point.beta * (bench.mean - 0.0252))
+    assert alpha == pytest.approx(0.0002 * 252, abs=0.02), "Jensen's alpha: the constant put in, a year"
+
+
+def test_the_frontier_bounds_every_fixed_mix(skfolio):
+    from zipfolio.sections.capm import efficient_frontier
+
+    days = pd.bdate_range("2022-01-03", periods=600, tz="UTC")
+    rng = np.random.default_rng(9)
+    names = pd.DataFrame(rng.multivariate_normal([0.0008, 0.0004, 0.0002], np.diag([2e-4, 1e-4, 4e-5]), len(days)),
+                         index=days, columns=["A", "B", "C"])
+    frontier = efficient_frontier(names, 0.02, pd.Series({"A": 0.2, "B": 0.5, "C": 0.3}))
+
+    vols = [p.vol for p in frontier.curve]
+    means = [p.mean for p in frontier.curve]
+    assert vols == sorted(vols) and means[-1] >= means[0], "from the least risky mix up to the best name"
+    assert frontier.minimum.vol <= min(names.std() * np.sqrt(252)) + 1e-9
+    assert frontier.minimum.vol <= frontier.equal.vol + 1e-9
+    assert frontier.tangency.sharpe(0.02) >= frontier.equal.sharpe(0.02) - 1e-6
+    assert frontier.tangency.sharpe(0.02) >= frontier.average.sharpe(0.02) - 1e-6
+    assert frontier.tangency_weights.sum() == pytest.approx(1.0) and (frontier.tangency_weights >= 0).all()
+
+
+def test_capm_section_maps_the_strategy_without_scoring_it(pyfolio, skfolio, tmp_path):
+    closes = session_closes("2021-01-04", "2023-12-29")
+    returns, records, cash, fills = a_traded_book(closes)
+    benchmark = pd.Series(np.random.default_rng(1).normal(0.0003, 0.009, len(closes)), index=closes)
+    output = tmp_path / "zipfolio.html"
+
+    built = build_tearsheet(output, returns, benchmark, records, cash, fills,
+                            market_data=daily_bars_for(closes, ["AAPL@XNAS", "MSFT@XNAS"]))
+
+    assert built.index("CAPM and the Efficient Frontier") == built.index("Portfolio Risk") + 1
+    page = output.read_text(encoding="utf-8")
+    section = page.split('id="capm-and-the-efficient-frontier"')[1].split("</section>")[0]
+    for heading in ("CAPM Measures", "Treynor ratio", "M² (at the benchmark", "Jensen's alpha",
+                    "Fixed Mixes of the Same Names", "The Max Sharpe Mix, in Hindsight",
+                    'aria-label="Security Market Line"', 'aria-label="Capital Market Line and Efficient Frontier"'):
+        assert heading in section, heading
+    scorecard = json.loads(page.split('id="zipfolio-scorecard">')[1].split("</script>")[0])
+    assert scorecard["score"]["counted"] + scorecard["score"]["not_applicable"] == 16, "still sixteen checks"
+    assert any(fact["label"] == "Against the efficient frontier" for fact in scorecard["context"])
+    holding = next(check for check in scorecard["checks"] if check["key"] == "buy_hold")
+    assert "On the efficient frontier of the same 2 names" in holding["note"], "buy and hold quotes the frontier"
+    summary = page.split('id="summary"')[1].split("</section>")[0]
+    assert '<a href="#capm-and-the-efficient-frontier">CAPM and the Efficient Frontier &rarr;</a>' in summary
+
+
+def test_capm_without_bars_is_the_market_lines_alone(pyfolio, tmp_path):
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    benchmark = pd.Series(np.random.default_rng(1).normal(0.0003, 0.009, len(closes)), index=closes)
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, returns, benchmark, records, cash, fills)
+
+    section = output.read_text(encoding="utf-8").split('id="capm-and-the-efficient-frontier"')[1].split("</section>")[0]
+    assert 'aria-label="Capital Market Line"' in section and "Fixed Mixes" not in section
+
+
+# ----------------------------------------------------------------------------
+# The page's tools: copying tables, saving charts, hints on terms.
+# ----------------------------------------------------------------------------
+
+def test_terms_get_their_hints_and_the_specific_one_wins():
+    from zipfolio.glossary import hint
+
+    assert "beta" in hint("Treynor ratio")
+    assert hint("CVaR 95%, daily (historical)").startswith("The average loss")
+    assert hint("VaR 95%, daily (historical)").startswith("The daily loss")
+    assert hint("Adjusted R-squared").startswith("R-squared penalised")
+    assert hint("Information ratio (alpha / residual vol)") != hint("Information ratio")
+    assert hint("Sharpe ratio at 0% (as QuantStats)") != hint("Sharpe ratio over 4.60% risk-free")
+    assert hint("AAPL") is None
+
+
+def test_tables_carry_a_copy_button_and_hints():
+    from zipfolio.tables import Table, table_html
+
+    frame = pd.DataFrame({"Value": ["1.20", "13 Feb 2025"]}, index=["Calmar ratio", "Start"])
+    rendered = table_html(Table(frame, None), title="Ratios", first_header="Metric")
+
+    assert '<div class="tbl-head"><h3>Ratios</h3><button type="button" class="tool icon" data-copy-table' in rendered
+    assert '<span class="term" tabindex="0" data-tip="The annual return divided by the maximum drawdown.">' \
+           'Calmar ratio</span>' in rendered
+    assert '<td class="n">13 Feb 2025</td>' in rendered, "a date does not break across lines"
+    assert "data-copy-table" not in table_html(Table(frame.iloc[:0], None), title="Nothing"), "nothing to copy"
+
+
+def test_every_chart_saves_from_the_page_menu_not_the_library_toolbox(pyfolio, tmp_path):
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, returns, None, records, cash, fills)
+    page = output.read_text(encoding="utf-8")
+
+    options = re.findall(r'<script type="application/json">(.*?)</script>', page, re.S)
+    assert options and not any("saveAsImage" in option for option in options), "no option asks ECharts to save"
+    assert "Save as JPG" in page and "renderToSVGString" in page
+    assert "data-enlarge" in page and "zipfolioEnlarge" in page, "and a button that opens it larger, with zoom"
+    buttons = page.count('class="tool icon" data-copy-table')
+    evidence = page.count('class="integrity-evidence"')
+    assert buttons == page.count('<div class="table">') - evidence + 1, "every table, and the scorecard"
+
+
+def test_percent_ticks_keep_the_decimals_their_spacing_needs():
+    from zipfolio.style import percent_ticks
+
+    formatter = percent_ticks()
+    formatter.set_locs([-0.05, -0.025, 0.0, 0.025, 0.05])
+    assert [formatter(v) for v in (-0.025, 0.0, 0.05)] == ["-2.5%", "0%", "5.0%"]
+    formatter.set_locs([0.0, 0.1, 0.2])
+    assert formatter(0.1) == "10%"
+
+
+def test_a_share_of_a_loss_is_not_shown_and_sectors_count_as_the_treemap(pyfolio, tmp_path):
+    from zipfolio.sections.sector_analysis import build_sector_analysis
+    from zipfolio.inputs import positions_in_dollars as dollars
+
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    dates = daily_returns(returns).index
+    holdings = dollars(records, cash, dates)
+    sectors = {"AAPL@XNAS": "Information Technology", "MSFT@XNAS": "Software"}
+    section = build_sector_analysis(daily_returns(returns), holdings, transactions_frame(fills), sectors, holdings)
+
+    table = untagged("".join(section.side))
+    assert "Profit by Sector" in table and "Profit Attribution" not in table
+    rows = dict(re.findall(r"<tr><td>(Information Technology|Software)</td><td>[^<]*</td><td>(-?[\d.]+)%</td>", table))
+    from zipfolio.sections.sector_analysis import treemap_frame
+    frame = treemap_frame(daily_returns(returns), holdings, transactions_frame(fills), None, sectors)
+    for sector, shown in rows.items():
+        assert float(shown) == pytest.approx(frame.loc[frame["sector"] == sector, "contribution"].sum() * 100, abs=0.01)
+    assert ("Share of PnL" in table) == (frame["pnl"].sum() > 0), "a share only of a profit"
+
+
+def test_titles_say_what_their_table_and_section_are_for():
+    from zipfolio.glossary import SECTIONS, title_hint
+    from zipfolio.page import GROUPS
+    from zipfolio.tables import Table, table_html
+
+    assert title_hint("Worst Drawdowns and Who Made Them") != title_hint("Worst Drawdowns")
+    assert title_hint("Return per Trade, by Symbol") != title_hint("Return per Trade")
+    assert title_hint("Drawdown #2, by Name (-17.2%)").startswith("Who made this drawdown")
+    assert all(title in SECTIONS for _, titles in GROUPS for title in titles), "every section has its line"
+    rendered = table_html(Table(pd.DataFrame({"Value": [1.0]}, index=["x"]), None), title="Cost Summary")
+    assert '<h3><span class="term" tabindex="0" data-tip="What trading cost in total' in rendered
+
+
+def test_the_page_carries_no_raw_data(pyfolio, tmp_path):
+    """Reports are shared by link: nothing on the page may hand over the book wholesale."""
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, returns, None, records, cash, fills,
+                    market_data=daily_bars_for(closes, ["AAPL@XNAS", "MSFT@XNAS"]))
+    page = output.read_text(encoding="utf-8")
+
+    assert "zipfolio-data" not in page and "data-copy-data" not in page and "### holdings.csv" not in page
+    assert "data-copy-report" in page and "data-save-report" in page, (
+        "the report itself, as text, for the reader's assistant: put together from the page in the browser")
+
+def test_capacity_says_in_a_line_what_has_no_rows(pyfolio, tmp_path):
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, returns, None, records, cash, fills,
+                    market_data=daily_bars_for(closes, ["AAPL@XNAS", "MSFT@XNAS"], volume=1e9))
+
+    section = output.read_text(encoding="utf-8").split('id="capacity"')[1].split("</section>")[0]
+    assert '<p class="empty">None.</p>' not in section, "no table of nothing"
+    assert "Every position sellable within a day" in section
+    assert "over the whole backtest and the last 126 sessions" in section
+    assert "Over a Day to Liquidate:" not in section and "Fills Over 1% of Daily Volume:" not in section
+
+
+def test_the_copy_for_an_assistant_has_measures_not_opinions(pyfolio, tmp_path):
+    """The report's text for a reader's assistant is put together from the page; what it takes must be bare."""
+    closes = session_closes()
+    returns, records, cash, fills = a_traded_book(closes)
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, returns, None, records, cash, fills,
+                    market_data=daily_bars_for(closes, ["AAPL@XNAS", "MSFT@XNAS"], volume=1e9))
+    page = output.read_text(encoding="utf-8")
+
+    scorecard = json.loads(page.split('id="zipfolio-scorecard">')[1].split("</script>")[0])
+    sample = next(check for check in scorecard["checks"] if check["key"] == "sample")
+    assert sample["metric"] == "Closed trades", "a number's name, not the question the check asks of it"
+    lines = re.findall(r'<div class="check"([^>]*)>', page)
+    assert lines and all("data-metric=" in line for line in lines), "every check line carries its bare measure"
+
+
+# ----------------------------------------------------------------------------
+# Accounting: every profit figure from the fills, the book and the commissions, reconciled with NAV.
+# ----------------------------------------------------------------------------
+
+def tiny_backtest(prices: dict, fills: list, capital: float = 10_000.0):
+    """A backtest small enough to check by hand, recorded the way the engine records one.
+
+    ``prices`` is each symbol's close per session; ``fills`` are ``(session, symbol, quantity, price,
+    commission)``. Cash pays for every fill at its price and every commission on its day; the book is
+    valued at the close; the returns are the book's own.
+    """
+    sessions = len(next(iter(prices.values())))
+    closes = session_closes("2023-03-01", "2023-06-30")[:sessions]
+    cash, held, last = capital, {}, capital
+    returns, records, cash_by_day, fill_rows, order_rows = [], [], [], [], []
+    for day, close in enumerate(closes):
+        for number, (when, symbol, quantity, price, commission) in enumerate(fills):
+            if when != day:
+                continue
+            cash -= quantity * price + commission
+            held[symbol] = held.get(symbol, 0) + quantity
+            stamp = (close - pd.Timedelta(hours=1)).tz_localize("UTC")
+            fill_rows.append({"id": f"f{number}", "order_id": f"o{number}", "dt": stamp, "symbol": symbol,
+                              "quantity": quantity, "price": price, "commission": None})
+            order_rows.append({"id": f"o{number}", "dt": stamp, "created": stamp, "type": "market",
+                               "symbol": symbol, "quantity": quantity, "filled": quantity,
+                               "commission": commission, "status": "filled"})
+        value = cash + sum(quantity * prices[symbol][day] for symbol, quantity in held.items())
+        returns.append(value / last - 1)
+        last = value
+        records += [{"date": close.strftime("%Y-%m-%d"), "symbol": symbol, "quantity": float(quantity),
+                     "cost_basis": 0.0, "last_sale_price": prices[symbol][day]}
+                    for symbol, quantity in held.items() if quantity]
+        cash_by_day.append(cash)
+    return (pd.Series(returns, index=closes), pd.DataFrame(records), pd.Series(cash_by_day, index=closes),
+            pd.DataFrame(fill_rows), pd.DataFrame(order_rows))
+
+
+def books(prices, fills, capital=10_000.0):
+    """Zipfolio's breakdown of a tiny backtest, and its closed trades."""
+    pytest.importorskip("pyfolio")
+    from zipfolio.accounting import profit_breakdown
+    from zipfolio.sections.round_trips import extract_round_trips
+
+    raw, records, cash, fill_rows, orders = tiny_backtest(prices, fills, capital)
+    returns = daily_returns(raw)
+    holdings = positions_in_dollars(records, cash, returns.index)
+    transactions = transactions_frame(fill_rows)
+    closed = extract_round_trips(returns, holdings, transactions)
+    return profit_breakdown(returns, holdings, transactions, orders, closed), closed
+
+
+def test_a_an_open_position_is_unrealized_and_no_trade():
+    profit, closed = books({"A@XNAS": [100.0, 110.0]}, [(0, "A@XNAS", 10, 100.0, 0.0)])
+
+    assert len(closed) == 0, "nothing was sold"
+    assert profit.realized == pytest.approx(0.0) and profit.unrealized == pytest.approx(100.0)
+    assert profit.net == pytest.approx(100.0) == pytest.approx(profit.end_value - profit.start_value)
+    assert abs(profit.returns_gap) <= profit.tolerance and profit.other_cash == pytest.approx(0.0)
+
+
+def test_b_a_partial_close_splits_realized_and_unrealized():
+    profit, closed = books({"A@XNAS": [100.0, 110.0, 120.0]},
+                           [(0, "A@XNAS", 10, 100.0, 0.0), (1, "A@XNAS", -4, 110.0, 0.0)])
+
+    assert len(closed) == 1
+    assert profit.realized == pytest.approx(40.0), "4 shares sold 10 above their cost"
+    assert profit.unrealized == pytest.approx(120.0), "6 shares held 20 above their cost"
+    assert profit.trading == pytest.approx(160.0) == pytest.approx(profit.net)
+
+
+def test_c_commission_is_taken_once_and_nav_says_so():
+    profit, _ = books({"A@XNAS": [100.0, 110.0, 120.0]},
+                      [(0, "A@XNAS", 10, 100.0, 1.0), (1, "A@XNAS", -4, 110.0, 1.0)])
+
+    assert profit.commission == pytest.approx(2.0)
+    assert profit.trading == pytest.approx(160.0), "trade PnL is before commission"
+    assert profit.net == pytest.approx(158.0) == pytest.approx(profit.end_value - profit.start_value)
+    assert profit.other_cash == pytest.approx(0.0), "the fills and the commissions explain all the cash"
+    assert abs(profit.returns_gap) <= profit.tolerance
+
+
+def test_d_slippage_is_in_the_fill_price_and_costs_once():
+    """A round trip at an unchanged price, 5 bps of slippage each way and $1 commission a fill."""
+    bps = 0.0005
+    profit, closed = books({"A@XNAS": [100.0, 100.0, 100.0]},
+                           [(0, "A@XNAS", 10, 100.0 * (1 + bps), 1.0), (1, "A@XNAS", -10, 100.0 * (1 - bps), 1.0)])
+
+    slippage = 10 * 100.0 * bps * 2
+    assert profit.realized == pytest.approx(-slippage), "the slippage is the trade's loss: it is in the prices"
+    assert profit.unrealized == pytest.approx(0.0)
+    assert profit.net == pytest.approx(-slippage - 2.0), "slippage and commission, each once"
+    assert profit.net == pytest.approx(profit.end_value - profit.start_value)
+    from zipfolio.sections.trading_costs import build_trading_costs  # noqa: F401  (reconstructs, adds back only)
+
+
+def test_e_positions_left_open_are_not_trades_even_when_bought_on_the_last_day():
+    """pyfolio's closing sale, dated midnight before the last session's fills, made a name bought on the
+    last day a short sold at midnight and bought back at the close -- a closed trade that never happened."""
+    profit, closed = books(
+        {"A@XNAS": [100.0, 120.0, 130.0], "B@XNAS": [200.0, 190.0, 180.0], "C@XNAS": [50.0, 50.0, 52.0]},
+        [(0, "A@XNAS", 10, 100.0, 1.0), (0, "B@XNAS", 5, 200.0, 1.0), (2, "C@XNAS", 3, 50.0, 1.0)])
+
+    assert len(closed) == 0, "no closing fill, no closed trade"
+    assert profit.unrealized == pytest.approx(10 * 30 - 5 * 20 + 3 * 2)
+    assert profit.open_names == 3
+    assert profit.net == pytest.approx(profit.unrealized - 3.0) == pytest.approx(profit.end_value - profit.start_value)
+
+
+def test_one_sale_closes_several_lots_first_in_first_out():
+    profit, closed = books({"A@XNAS": [100.0, 110.0, 120.0, 130.0]},
+                           [(0, "A@XNAS", 10, 100.0, 0.0), (1, "A@XNAS", 10, 110.0, 0.0),
+                            (2, "A@XNAS", -15, 120.0, 0.0)])
+
+    assert len(closed) == 1, "one closing sale is one trade"
+    assert profit.realized == pytest.approx(10 * 20 + 5 * 10), "the oldest lot first, then half of the next"
+    assert profit.unrealized == pytest.approx(5 * (130 - 110))
+
+
+def test_the_page_reconciles_its_profit_and_calls_pre_commission_pnl_so(pyfolio, tmp_path):
+    raw, records, cash, fills, orders = tiny_backtest(
+        {"A@XNAS": [100.0 + i for i in range(40)], "B@XNAS": [50.0 + (i % 5) for i in range(40)]},
+        [(i, "A@XNAS", 10 if i % 2 == 0 else -10, 100.0 + i, 1.0) for i in range(0, 30, 3)]
+        + [(i, "B@XNAS", 20 if i % 2 == 0 else -20, 50.0 + (i % 5), 1.0) for i in range(1, 31, 3)]
+        + [(36, "A@XNAS", 5, 136.0, 1.0)])
+    output = tmp_path / "zipfolio.html"
+    build_tearsheet(output, raw, None, records, cash, fills, orders=orders)
+    page = untagged(output.read_text(encoding="utf-8"))
+
+    table = page.split("Profit Reconciliation")[1].split("</table>")[0]
+    assert "Realized:" in table and "Unrealized:" in table and "Commission" in table
+    assert "<td>Difference</td><td>$0.00</td>" in table, "the book and the returns agree"
+    assert "Their net PnL" not in page and "Avg. trade net profit" not in page, "pre-commission PnL is not net"

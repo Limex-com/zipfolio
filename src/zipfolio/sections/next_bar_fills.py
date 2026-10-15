@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from ..currency import money
+from ..currency import money, unit
 from ..inputs import utc_dates
 from ..page import BAD, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart
@@ -56,11 +56,26 @@ def repriced_fills(transactions: pd.DataFrame, fill_bars: pd.DataFrame, referenc
 
 
 def next_bar_returns(returns: pd.Series, holdings: pd.DataFrame, fills: pd.DataFrame) -> pd.Series:
-    """The strategy's returns with each fill's ``impact`` booked on the day its next bar opened."""
+    """The strategy's returns had every fill been priced at its next bar's open.
+
+    From that open on the two books hold the same shares, so the alternative
+    book is worth the backtest's book plus every ``impact`` booked so far --
+    added up, not compounded: the money a better price saved stays in cash, as
+    the later fills buy the same shares either way. Its final value is the
+    backtest's plus the sum of the fills' differences, to the cent.
+    """
     priced = fills.dropna(subset=["impact", "next_date"])
     impact = priced["impact"].groupby(utc_dates(priced["next_date"])).sum()
-    start_value = holdings.sum(axis="columns") / (1 + returns)
-    return returns + impact.reindex(returns.index, fill_value=0.0) / start_value
+    impact = impact.reindex(returns.index, fill_value=0.0)
+    value = holdings.sum(axis="columns").reindex(returns.index)
+    start = float(value.iloc[0] / (1 + returns.iloc[0]))
+    alternative = value + impact.cumsum()
+    return (alternative / alternative.shift(1).fillna(start) - 1).rename(returns.name)
+
+
+def signed_money(value: float) -> str:
+    """``+$1,234.50`` for a gain, ``-$1,234.50`` for a loss."""
+    return ("+" if value > 0 else "") + money(value)
 
 
 def build_next_bar_fills(returns, holdings, transactions, fill_bars, settings) -> Section | None:
@@ -101,27 +116,40 @@ def build_next_bar_fills(returns, holdings, transactions, fill_bars, settings) -
     buys, sells = priced[priced["amount"] > 0], priced[priced["amount"] < 0]
 
     def weighted(frame):
-        return f"{np.average(frame['move_bps'], weights=frame['value']):.1f} bps" if len(frame) else "-"
+        return f"{np.average(frame['move_bps'], weights=frame['value']):+.1f} bps" if len(frame) else "-"
 
     start_capital = float(holdings.sum(axis="columns").iloc[0] / (1 + returns.iloc[0]))
     total_impact = float(priced["impact"].sum())
+    final = float(holdings.sum(axis="columns").iloc[-1])
+    waited_final = start_capital * float((1 + alternative).prod())
     moves = pd.Series({
         "Fills repriced": f"{len(priced):,} of {len(fills):,}",
-        "Move to the next open (value-weighted)": f"{np.average(priced['move_bps'], weights=weights):.1f} bps",
+        "Move to the next open (value-weighted)": f"{np.average(priced['move_bps'], weights=weights):+.1f} bps",
         "  buys": weighted(buys),
         "  sells": weighted(sells),
         "Fills the wait made worse": f"{(priced['move_bps'] > 0).mean():.0%}",
-        "PnL lost to the wait": money(-total_impact),
-        "  vs starting capital": f"{-total_impact / start_capital:.2%}" if start_capital else "-",
+        "Fills the wait made better": f"{(priced['move_bps'] < 0).mean():.0%}",
+        "Effect of waiting on PnL": signed_money(total_impact) + (" (a gain)" if total_impact > 0 else
+                                                                " (a loss)" if total_impact < 0 else ""),
+        "  vs starting capital": f"{total_impact / start_capital:+.2%}" if start_capital else "-",
+        f"Final value, {signal.lower()}": money(final),
+        f"Final value, {waited.lower()}": money(waited_final),
+        "Difference in final value": signed_money(waited_final - final) + (
+            " = the sum over the fills" if abs(waited_final - final - total_impact) < 0.01 else
+            f" (the fills add up to {signed_money(total_impact)})"),
     })
-    section.table(Table(moves.to_frame("Value"), None), title="What the Wait Cost", first_header="Metric")
+    section.table(Table(moves.to_frame("Value"), None), title="What the Wait Did", first_header="Metric")
+    section.side.append(
+        '<p class="caption">Signs: a move in bps is positive when the next open was worse for the fill -- '
+        'higher for a buy, lower for a sell. The effect on PnL is positive when waiting would have paid '
+        'more, negative when it would have cost.</p>')
     section.side.append(
         f'<p class="explain">This backtest fills each order on the bar whose data produced it, at that '
         f'bar\'s {reference}. A real order sent on that data reaches the market on the bar after. Here '
         'every fill is priced again at the open of the instrument\'s next bar in the data -- the next '
         'session for daily bars -- with the same quantity and the same slippage. From that open on the '
         'two books hold the same shares, so the difference is exactly the price paid, booked on the day '
-        'of the next bar.</p>'
+        'of the next bar and kept in cash rather than reinvested.</p>'
         '<p class="explain">A strategy that buys what has just risen and sells what has just fallen '
         'tends to pay for the wait; one whose edge is real survives it. The trades themselves are not '
         're-decided: the same shares, a bar later.</p>')
@@ -154,31 +182,39 @@ def build_next_bar_fills(returns, holdings, transactions, fill_bars, settings) -
 
         section.chart(chart("Move from the Fill to the Next Open", histogram, height=3.2))
 
-    def impact_over_time(ax):
-        running = (alternative - returns).cumsum()
-        ax.fill_between(running.index, running.to_numpy(), 0, color=LOSS_COLOR, alpha=0.35, lw=0)
-        ax.plot(running.index, running.to_numpy(), color=LOSS_COLOR, lw=1.2)
-        ax.axhline(0, color="black", lw=0.8)
-        ax.set_ylabel("Next bar minus signal bar")
+    running = priced["impact"].groupby(utc_dates(priced["next_date"])).sum().reindex(
+        returns.index, fill_value=0.0).cumsum()
 
-    section.chart(chart("What the Wait Did Over Time, Summed Daily Returns", impact_over_time, height=3.0,
-                        y="pct"))
+    def impact_over_time(ax):
+        values = running.to_numpy()
+        ax.fill_between(running.index, values, 0, where=values >= 0, color=STRATEGY_COLOR, alpha=0.35, lw=0,
+                        interpolate=True)
+        ax.fill_between(running.index, values, 0, where=values < 0, color=LOSS_COLOR, alpha=0.35, lw=0,
+                        interpolate=True)
+        ax.plot(running.index, values, color="#333333", lw=1.1)
+        ax.axhline(0, color="black", lw=0.8)
+        ax.set_ylabel(f"Effect of waiting, {unit()} (+ = gain)")
+
+    section.chart(chart("What the Wait Did to PnL Over Time", impact_over_time, height=3.0))
 
     base, after = ep.annual_return(returns), ep.annual_return(alternative)
     detail = (f"Annual return {base:.1%} with fills at the signal bar's {reference}, "
-              f"{after:.1%} at the next bar's open.")
+              f"{after:.1%} at the next bar's open; the wait's effect on PnL is {signed_money(total_impact)}.")
     label, value = "Annual return, filled a bar later", f"{base:.1%} → {after:.1%}"
-    if base > 0:
+    common = dict(key="timing", threshold=f"waiting a bar costs under {WARN_SHARE:.0%} of the return",
+                  advice="Run it again with next-bar execution: that is the result a real order would get.")
+    if after >= base:
+        section.finding(OK, label, value, "Waiting one bar does not hurt this strategy. " + detail, **common)
+    elif base > 0:
         lost = (base - after) / base
         if after <= 0:
-            section.finding(BAD, label, value, "Waiting one bar wipes out the return. " + detail, key="timing")
+            section.finding(BAD, label, value, "Waiting one bar wipes out the return. " + detail,
+                            issue="waiting one bar for the fills wipes out the return", **common)
         else:
             status = BAD if lost >= BAD_SHARE else WARN if lost >= WARN_SHARE else OK
-            section.finding(status, label, value, f"Waiting one bar costs {max(lost, 0):.0%} of the return. "
-                            + detail, key="timing")
+            section.finding(status, label, value, f"Waiting one bar costs {lost:.0%} of the return. " + detail,
+                            issue=f"waiting one bar for the fills costs {lost:.0%} of the return", **common)
     else:
-        section.finding(OK if after >= base else WARN, label, value,
-                        "The backtest lost money; waiting one bar " + ("does not make it worse. " if after >= base
-                                                                        else "makes it worse. ") + detail,
-                        key="timing")
+        section.finding(WARN, label, value, "The backtest lost money; waiting one bar makes it worse. " + detail,
+                        issue="waiting one bar for the fills deepens the loss", **common)
     return section

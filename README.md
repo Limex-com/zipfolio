@@ -66,26 +66,55 @@ not a restatement of its equity curve.
 Charts on the left and narrow tables on the right in a 960px column, in the
 QuantStats Pro look (white ground, light grid, the same palette: strategy
 `#6B9E00`, benchmark `#5C5C5C`), so the two reports read as one product.
-Every chart is SVG; the page has no external requests. The header and footer
-name the Zipfolio version that built the page and link back to this repository.
-The default title is "Zipfolio Tearsheet: Portfolio, Execution & Cost Analysis"
-(`title=` changes it).
+The header and footer name the Zipfolio version that built the page and link
+back to this repository. The default title is "Zipfolio Tearsheet: Portfolio,
+Execution & Cost Analysis" (`title=` changes it).
+
+**Charts are interactive**: hover for the values, click a legend entry to hide a
+series, zoom any dated chart with its slider or the zoom tool. The icons in a
+chart's corner open it larger, with zoom and pan, and copy it as an image or save it
+as PNG, JPG or SVG; the button
+over a table copies it for Excel or Google Sheets. A term in a table -- CVaR,
+Treynor, M² -- explains itself on hover, or on tap on a phone (`zipfolio.glossary`).
+On a phone the charts lay themselves out for the width they get. "Copy report for
+an AI" in the header puts the report's numbers -- every metric and table, without
+its verdicts or reasoning -- on the clipboard as Markdown, to talk the strategy
+over with any assistant; it carries what the page shows and nothing more.
+Each chart is drawn with matplotlib -- most through pyfolio's own plotting -- and
+then read back, artist by artist, into an [Apache ECharts](https://echarts.apache.org)
+chart with the same limits, ticks and colours (`zipfolio.interactive`). ECharts
+5.6 (Apache-2.0) is inlined in the page, which still makes no external requests.
+A chart the converter cannot read stays a static SVG; `interactive=False` keeps
+them all static.
 
 The page opens with a **summary** in the look of QuantStats Pro's health
-summary: a **score out of 16** -- the same sixteen checks for every backtest,
-four per part of the report (`page.SCORECARD`), so two scores compare -- the
-counts of checks that hold up, need a look or are critical, and one table of
-verdicts: measure, value, badge, each row linked to its section with the
-reasoning on hover. A check that cannot be made for a backtest reads N/A and
-does not pass. Everything else the sections found is one line of context under
-the table. Thresholds are constants at the top of each section's module.
+summary: the main issues in one sentence, the facts at a glance (time in the
+market, style, how far below its high the strategy ended, the extra cost that
+would erase the profit, capacity), the score, and one table of **16 checks, four per
+part** (`page.SCORECARD`), the same for every backtest. A row shows the check, its
+value and a verdict; tapped, it opens the reasoning, the threshold, what to try,
+and a link to the numbers.
 
-| Part | The four checks |
+Checks that measure one fact are a **family** -- one row, with the worst of its
+members' verdicts -- so a strategy on one stock is not marked down four times
+for it. A check that does not apply (the top two names of a book that traded
+one) is N/A and out of the count; the score is out of the checks that could be
+judged. Thresholds are constants at the top of each section's module. The
+scorecard is also embedded in the page as JSON (`<script id="zipfolio-scorecard">`),
+for an agent reading the report.
+
+| Part | The four rows |
 | --- | --- |
-| I | annual return vs the benchmark; alpha after the factors (or over the market model); total return without the best 5 days; luck test (chance of a loss) |
-| II | max drawdown vs the benchmark; up / down capture; the riskiest name's share of predicted volatility (effective names without bars); the largest sector's share of the gross book |
-| III | largest position on a typical day; profit from the top 2 names; profit from the best 5 trades; winning trades and profit factor |
-| IV | fill timing (the return filled a bar later, when orders fill on their signal bar); fill realism; costs' share of gross profit; liquidity at the capacity base |
+| I | annual return vs the benchmark; against buying and holding the same names; **more than luck** (the Sharpe ratio's probabilistic -- or, with `trials`, deflated -- significance, the luck test, alpha after the factors); **rests on a few days or trades** (the return without the best 5 days, profit from the best 5 trades) |
+| II | max drawdown vs the benchmark (at the strategy's own exposure when it is partly in cash); up / down capture; longest time below a peak; **concentration in one name** (largest position, profit from the top 2 names, the riskiest name's share of predicted volatility, the largest sector) |
+| III | winning trades and profit factor; enough closed trades to judge (30); profit still open at the end; max gross exposure |
+| IV | fill timing (the return filled a bar later, when orders fill on their signal bar); fill realism; costs' share of the profit before costs; liquidity |
+
+The parts start closed under their verdicts; a link into one opens it, and
+"Expand all" opens every one. In each section, the paragraphs that explain how
+to read it wait behind a "How to read this section" toggle. A strategy that
+traded one name gets no breakdown by name or sector -- each would read "100%"
+of that name.
 
 The sections follow in four parts, each the question a reader brings:
 
@@ -93,12 +122,12 @@ The sections follow in four parts, each the question a reader brings:
 
 | Section | Shown when | Contents |
 | --- | --- | --- |
-| **Performance** | always | key metrics, cumulative returns, underwater curve -- deliberately short; returns are QuantStats' job |
+| **Performance** | always | key metrics for the strategy, buying and holding its names, and the benchmark, side by side; the Sharpe ratio over the risk-free rate and at 0%; whether it is more than luck after N tries; first half against second; cumulative returns, underwater curve -- returns in depth are QuantStats' job |
 | **Profit Concentration** | 50+ sessions | the return without the best 5, 10 and 20 days; the share of net PnL in the best trades; a luck test -- the same trades redrawn at random 5,000 times -- and its chance of a net loss |
-| **Instruments** | traded | each name's PnL, contribution, weight, days held, trade stats; contribution by year; daily and round-trip return distributions per name; cumulative PnL by name |
+| **Instruments** | two or more names traded | each name's PnL, contribution, weight, days held, trade stats; contribution by year; daily and round-trip return distributions per name; cumulative PnL by name |
 | **Long and Short** | the book went short | PnL, contribution, exposure, winning days and return on exposure of each side; cumulative and yearly PnL by side |
-| **Sector Analysis** | a held name has a sector | allocation over time, average and peak, profit attribution by GICS sector |
-| **Factor Analysis** | a factor model is set | Fama-French 5 + momentum (US) or a market model against the benchmark over RUONIA (Moscow): betas with Newey-West t-stats, alpha, fit, attribution (overall and by year), rolling betas, return decomposition |
+| **Sector Analysis** | two or more names, one with a sector | a **treemap** in the look of finviz's market map -- a tile per name inside its sector, sized by the capital it took and coloured by what it added to the return; allocation over time, average and peak, net PnL and contribution by sector (GICS in the US, MOEX sector indices in Moscow) |
+| **Factor Analysis** | a factor model is set | Fama-French 5 + momentum (US) or a market model against the benchmark over RUONIA (Moscow): betas with Newey-West t-stats, alpha, fit, attribution (overall and by year), rolling betas, return decomposition; with SMB and HML, a **style box** -- Morningstar's large/mid/small by value/blend/growth grid, the strategy placed by its betas with its 95% interval, its rolling path and the benchmark |
 
 **II. What it risked**
 
@@ -107,6 +136,7 @@ The sections follow in four parts, each the question a reader brings:
 | **Drawdowns** | traded | each of the five worst drawdowns split, exactly, across the names and sectors that made it |
 | **Market Regimes** | a benchmark is given | up and down capture, beta on up and down days, the average month in rising/falling x calm/volatile markets, monthly returns against the benchmark |
 | **Portfolio Risk** | always (more when traded) | VaR/CVaR/EVaR, drawdown-at-risk/CDaR/EDaR, Ulcer index, Gini mean difference; rolling tail risk; risk contribution per holding; clustered correlations; the same names under four allocation rules, walk-forward |
+| **CAPM and the Efficient Frontier** | a benchmark, or bars of two held names | not a check: the security market line (strategy and names by beta, Jensen's alpha), the capital market line, CAPM measures (Treynor, M², systematic and specific volatility, tracking error, information ratio); with bars, the long-only efficient frontier of the names held most with the max-Sharpe and minimum-variance mixes -- hindsight, drawn as a ceiling |
 | **Risk Over Time** | traded | predicted volatility (each day's weights x trailing covariance) against what the next month delivered, each name's share of risk by month, effective number of names, top-3 and largest weight |
 
 **III. How it holds and trades**
@@ -114,21 +144,77 @@ The sections follow in four parts, each the question a reader brings:
 | Section | Shown when | Contents |
 | --- | --- | --- |
 | **Positions** | traded | exposure, top positions, long/short concentration, holdings, gross leverage |
-| **Transactions** | traded | trading frequency, fill sizes, buys and sells, turnover, volume, fill times on the market's own clock |
+| **Transactions** | traded | trading frequency, fill sizes, buys and sells, turnover (traded value over portfolio value, and one-way), volume, fill times on the market's own clock |
 | **Closed Trades** | 5+ trades | what counts as a trade, with examples (pyfolio's round trips: every sale with the shares it closes, oldest first); counts, PnL, holding time and return on cost, long and short; share of profit by symbol; lifetimes, distributions |
 
 **IV. Can it be traded**
 
 | Section | Shown when | Contents |
 | --- | --- | --- |
-| **Next-Bar Fills** | orders fill on their signal bar and `fill_bars` carry the next open | every fill priced again at the open of the instrument's next bar, same shares and slippage: returns, Sharpe and drawdown both ways, the move per fill, what the wait cost over time |
+| **Next-Bar Fills** | orders fill on their signal bar and `fill_bars` carry the next open | every fill priced again at the open of the instrument's next bar, same shares and slippage: returns, Sharpe and drawdown both ways, the move per fill, what the wait did to PnL over time, reconciled: the difference in final value is the sum over the fills |
 | **Execution** | orders are given | how the backtest fills orders, realism checks, orders by type, fill statistics, fill price within the bar and against its typical price, share of bar volume, implementation shortfall, waits |
 | **Trading Costs** | traded | the cost model in plain words, cost summary and per symbol, costs over time, returns before and after costs, sensitivity to extra slippage |
-| **Capacity** | daily bars are given | days to liquidate, fills over 5% of daily volume, Sharpe across capital bases |
+| **Capacity** | daily bars are given | the starting capital at which the largest fill reaches 1% of its day's volume, and the run's volume limit; days to liquidate at the strategy's own capital; fills over 1% of daily volume; Sharpe across capital bases |
 
 A section that cannot be computed becomes a short note, a chart that fails is
 left out, and both are logged; the page fails only if nothing at all can be
 reported.
+
+## Accounting integrity
+
+Before a reader trusts what the page says about a strategy, the numbers have to add up to the book they
+came from. The panel at the top of every page says whether they do: `zipfolio.integrity` replays the
+book -- fills, fees, cash, positions, events -- independently of the report (no pyfolio), and checks every
+profit figure the page publishes against it. It certifies the arithmetic of the book, nothing more: not
+the market data, not the absence of look-ahead, not the realism of the fills, not an edge.
+
+```python
+from zipfolio.integrity import AccountingInputs, AccountingPolicy, check_integrity
+from zipfolio.ziplime import contract_specs, opening_state
+
+report = check_integrity(AccountingInputs(
+    returns=returns, position_records=positions, cash=cash, transactions=fills, orders=orders,
+    cost_settings=settings,
+    opening_state=opening_state(capital, returns.index[0]),   # the book before the first session
+    contract_specs=contract_specs(["AAPL@XNGS", "JPM@XNYS"]),  # what each instrument is
+    portfolio_events=events,                                  # dividends, fees, flows, splits, if any
+), AccountingPolicy(mode="strict"))
+report.to_json("accounting_integrity.json")                   # deterministic, accounting-integrity/v1
+report.raise_on_failure()                                     # strict: a failed invariant is fatal
+```
+
+`build_tearsheet` takes the same `opening_state`, `contract_specs` and `portfolio_events`, runs the
+check itself and embeds the JSON (`#zipfolio-integrity`) beside the panel; `integrity_report=` shows one
+made beforehand. From a shell or CI: `python -m zipfolio.integrity book.pkl --mode ci --json out.json`.
+
+Each check has a stable id and one outcome -- `PASS`, `FAIL` (an invariant broken beyond tolerance),
+`WARN` (a convention or label in doubt, the arithmetic intact), `SKIPPED` (not possible with the inputs
+given, with what is missing) or `NOT_APPLICABLE`. The report is `FAIL` if a required check fails,
+`INCOMPLETE` if one could not be made, `WARN` if a warning remains, `PASS` only when nothing is left open;
+its assurance says how much was checked: `summary` (the published figures against each other), `reconciled`
+(recomputed from the period snapshots) or `ledger` (every event replayed from the opening state). Missing
+evidence is never a pass: a cash or share difference with no event ledger is `SKIPPED` -- a dividend or a
+split could explain it -- and an instrument without a contract spec is not valued.
+
+| Check | What it proves |
+| --- | --- |
+| `INPUT.FILL_UNIQUENESS`, `INPUT.TIMESTAMP_ALIGNMENT` | every fill once, readable; returns, snapshots and fills on the same sessions |
+| `NAV.SNAPSHOT_RECONCILIATION` | cash plus positions at their marks equals the opening value compounded by the returns, every session |
+| `RETURNS.NAV_RECONCILIATION` | each return is the change in cash plus positions, external flows out |
+| `CASH.LEDGER_REPLAY`, `POSITIONS.LEDGER_REPLAY` | cash and shares replayed from the opening state, fills, fees and events equal the record, every session |
+| `PNL.REPORTED_SUMMARY_IDENTITY` | the published realized + unrealized - commission + other cash equals the profit the returns imply (report figures only) |
+| `PNL.PORTFOLIO_RECONCILIATION` | each name's change in value less its fills, less fees, plus income, equals the change in NAV net of flows |
+| `PNL.REALIZED_UNREALIZED` | the report's split matches first-in-first-out lots from the fills |
+| `COST.COMMISSION_RECONCILIATION` | the commission is the orders' total, each order once, and what the fee model gives |
+| `COST.SLIPPAGE_SINGLE_COUNT` | slippage is in the fill prices and taken off nowhere else |
+| `ATTRIBUTION.INSTRUMENT_SUM`, `ATTRIBUTION.SECTOR_SUM` | the names, and the sectors with an explicit Unclassified bucket, add up to the book |
+| `ROUND_TRIP.SYNTHETIC_CLOSURES` | every closed trade closes on a real fill; open positions are unrealized, not trades |
+| `ROUND_TRIP.GROSS_NET_CONVENTION`, `REPORT.DISPLAY_VS_CALCULATION` | nothing gross is called net; every shown figure is the calculated one |
+
+v1 values cash equities and funds in one currency. Futures, options, bonds and foreign-currency
+instruments are skipped, never valued with a guessed multiplier. The tests replay the real Momentum
+Rotation backtest from its primary book (`tests/fixtures/momentum_rotation`) and check that a one-fill,
+one-fee or one-mark corruption of random books always fails.
 
 ## US and Moscow
 
@@ -136,7 +222,7 @@ Zipfolio reports a US book and a Moscow book each in its own terms:
 
 | | US | Moscow |
 | --- | --- | --- |
-| Currency (`currency=`) | `"USD"`: `$1,234.50`, capacity at a $1m base | `"RUB"`: `1,234.50 ₽`, capacity at a 100m ₽ base |
+| Currency (`currency=`) | `"USD"`: `$1,234.50` | `"RUB"`: `1,234.50 ₽` |
 | Factor analysis (`factor_model=`) | `"ff5_mom"`: Fama-French 5 + momentum | `"market"`: a market model against the benchmark -- IMOEX -- over RUONIA |
 | Risk-free rate | Fama-French `RF` (one-month T-bill) | RUONIA, the Bank of Russia's overnight rate (`risk_free="ruonia"`) |
 | Sectors | GICS, from a table you supply (`us_sector_mappings`) | the Moscow Exchange sector indices -- MOEXOG, MOEXFN, MOEXMM... (`moex_sector_mappings`) |
@@ -267,7 +353,8 @@ pip install "zipfolio[risk]"     # + skfolio, for the Portfolio Risk section
 pip install "zipfolio[ziplime]"  # + polars, for zipfolio.ziplime
 ```
 
-Without skfolio the Portfolio Risk section is left out; nothing else changes.
+Without skfolio the Portfolio Risk section and the efficient frontier are left
+out; nothing else changes.
 Requires Python 3.10+.
 
 Until the first release reaches PyPI, or for the latest unreleased code,
@@ -302,19 +389,26 @@ on the sections that need it.
 | Argument | Shape | Used by |
 | --- | --- | --- |
 | `returns` | per-period strategy returns, datetime index | everything |
-| `benchmark` | benchmark returns, same index, or `None` | Performance, Portfolio Risk |
+| `benchmark` | benchmark returns, same index, or `None` | Performance, Portfolio Risk, CAPM |
 | `position_records` | rows of `date, symbol, quantity, last_sale_price` per open position per day | Positions, Instruments, Sectors, Risk, Round Trips |
 | `cash` | cash at the end of each period | (same) |
 | `transactions` | rows of `id, order_id, dt, symbol, quantity, price` | Instruments, Transactions, Execution, Costs, Round Trips |
 | `orders` | rows of `id, created, dt, type, symbol, quantity, filled, commission, limit, stop, status, reason` | Execution, Trading Costs, Instruments |
 | `fill_bars` | `open, high, low, close, volume`, optionally `next_open, next_date`, indexed by fill `id` | Execution, Next-Bar Fills |
 | `decision_prices` | `decision_price` indexed by order `id` | Execution (shortfall) |
-| `market_data` | rows of `symbol, day, price, volume` | Capacity, Portfolio Risk |
+| `market_data` | rows of `symbol, day, price, volume` | Capacity, Portfolio Risk, Efficient Frontier |
 | `cost_settings` | `commission_model, commission_per_share, commission_rate, commission_min_trade_cost, slippage_basis_points, slippage_volume_limit, price_used_in_order_execution, same_bar_execution, capital` | Trading Costs, Execution |
 | `sector_mappings` | `{symbol: sector}`; `us_sector_mappings(["AAPL@XNGS", ...], table=...)` gives GICS sectors for US listings from your table | Sector Analysis |
 | `factor_model` | `"ff5_mom"` (default), `"ff5"`, `"ff3"`, `"ff3_mom"`, `"market"` or `None` | Factor Analysis |
 | `risk_free` | for `"market"`: `"ruonia"` (default) or a series of a rate in percent a year | Factor Analysis |
-| `currency` | `"USD"` (default), `"RUB"`, `"EUR"` | every amount, the capacity base |
+| `currency` | `"USD"` (default), `"RUB"`, `"EUR"` | how every amount is written |
+| `run_info` | `{label: value}` | what the header says about the run before what the page knows: strategy and version, the benchmark's ticker and whether it is a price or a total return, universe |
+| `trials` | int | versions of the strategy backtested; the Sharpe ratio is then judged against the best of that many no-edge strategies (deflated Sharpe ratio) |
+| `interactive` | `True` (default), `False` | ECharts charts with tooltips and zoom, or static SVG |
+| `opening_state` | `OpeningState` -- the book before the first session (`zipfolio.ziplime.opening_state(capital, start)`) | Accounting integrity (ledger) |
+| `contract_specs` | `{symbol: ContractSpec}` (`zipfolio.ziplime.contract_specs(listings)`) | Accounting integrity |
+| `portfolio_events` | rows of `dt, kind, symbol, cash, quantity, ratio` -- dividends, interest, fees, deposits, withdrawals, splits | Accounting integrity, Profit Reconciliation |
+| `integrity`, `integrity_report`, `integrity_policy` | `False` to leave the panel out; a report made beforehand; an `AccountingPolicy` | Accounting integrity |
 | `factor_data` | your own factor returns (decimals, with `RF`), instead of the download | Factor Analysis |
 | `title` | the page title; defaults to `zipfolio.DEFAULT_TITLE` | header |
 | `market_timezone` | e.g. `"Europe/Moscow"`; defaults to `ZIPFOLIO_MARKET_TIMEZONE`, then New York | fill-time chart |
@@ -356,6 +450,8 @@ in page order.
   so dollars and percent can disagree in sign for a name that earned early and
   gave back later -- the report says so where it shows them.
 - Factor analysis needs at least 60 sessions inside the factor data.
+- The efficient frontier is measured with the returns the names went on to
+  make: hindsight, a ceiling no strategy could have held. It is long only.
 
 ## Development
 

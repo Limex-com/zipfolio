@@ -1,6 +1,6 @@
 [project]
 name = "zipfolio"
-version = "0.2.1"
+version = "0.3.0"
 description = "Backtest tearsheets that read the book, not just the returns: positions, instruments, sectors, factors, execution realism and trading costs. Part of the ZipLime ecosystem."
 authors = [{ name = "Ziplime" }]
 readme = "README.md"

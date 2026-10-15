@@ -7,7 +7,7 @@ import pandas as pd
 
 from ..currency import compact, money, money_formatter, unit
 from ..inputs import utc_dates
-from ..page import BAD, OK, WARN, Section
+from ..page import BAD, INFO, OK, WARN, Section
 from ..style import BENCHMARK_COLOR, LOSS_COLOR, STRATEGY_COLOR, chart, color_mix
 from ..tables import Table
 
@@ -74,7 +74,9 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
         "Traded value": money(traded_value, 0),
         "Costs per traded value": f"{total_costs / traded_value * 1e4:,.2f} bps" if traded_value else "-",
         "Costs vs starting capital": f"{total_costs / starting_capital:.2%}" if starting_capital else "-",
-        "Costs vs gross profit": f"{total_costs / gross_profit:.2%}" if gross_profit > 0 else "-",
+        "Costs vs profit before costs": f"{total_costs / gross_profit:.2%}" if gross_profit > 0 else "-",
+        "Extra cost that would erase the profit": (f"+{net_profit / traded_value * 1e4:,.0f} bps of traded value"
+                                                   if traded_value and net_profit > 0 else "-"),
         "Annual return before costs": f"{gross_annual:.2%}",
         "Annual return after costs": f"{net_annual:.2%}",
         "Annual drag from costs": f"{(gross_annual - net_annual) * 100:.2f} pp",
@@ -91,23 +93,34 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
     section.table(Table(pd.Series(summary).to_frame("Value"), None), title="Cost Summary", first_header="Metric")
     detail = (f"{(gross_annual - net_annual) * 100:.2f} pp a year: {gross_annual:.1%} before costs, "
               f"{net_annual:.1%} after.")
+    common = dict(key="costs", threshold="under 25% of the profit before costs",
+                  advice="Trade less often, or only where the expected move is well above the costs.")
     if gross_profit > 0:
         share = total_costs / gross_profit
         status = BAD if net_profit < 0 or share >= 0.5 else WARN if share >= 0.25 else OK
-        note = "Trading costs turned a gross profit into a loss. " if net_profit < 0 else ""
-        section.finding(status, "Costs' share of gross profit", f"{share:.0%}", note + detail, key="costs")
+        note = "Trading costs turned a profit into a loss. " if net_profit < 0 else ""
+        section.finding(status, "Costs' share of profit before costs", f"{share:.0%}", note + detail,
+                        issue=f"trading costs take {share:.0%} of the profit", **common)
     elif total_costs > 0:
-        section.finding(WARN, "Costs' share of gross profit", f"{compact(total_costs)} on a gross loss",
-                        "The strategy lost money before costs; costs only added to it. " + detail, key="costs")
+        section.finding(WARN, "Costs' share of profit before costs", f"{compact(total_costs)} on a loss",
+                        "The strategy lost money before costs; costs only added to it. " + detail,
+                        issue="it lost money before costs, and costs added to the loss", **common)
+    if traded_value and net_profit > 0:
+        edge = net_profit / traded_value * 1e4
+        section.finding(INFO, "Profit gone at", f"+{edge:,.0f} bps of extra cost",
+                        f"Charging every fill {edge:,.0f} bps more than the model does -- a wider spread, a worse "
+                        f"fill -- would take the {money(net_profit, 0)} of profit to zero, on "
+                        f"{money(traded_value, 0)} traded.", key="breakeven")
 
     by_symbol = pd.DataFrame({"Commission": commission_by_symbol, "Slippage": slippage_by_symbol}).fillna(0.0)
     by_symbol["Total"] = by_symbol.sum(axis="columns")
     by_symbol["Share"] = by_symbol["Total"] / by_symbol["Total"].sum() if by_symbol["Total"].sum() else 0.0
     by_symbol = by_symbol.sort_values("Total", ascending=False).head(15)
     money_column = money_formatter()
-    section.table(Table(by_symbol, None, None, {"Commission": money_column, "Slippage": money_column, "Total": money_column,
-                                                 "Share": "{:.1%}".format}),
-                  title="Costs by Symbol", first_header="Symbol")
+    if len(by_symbol) > 1:
+        section.table(Table(by_symbol, None, None, {"Commission": money_column, "Slippage": money_column,
+                                                     "Total": money_column, "Share": "{:.1%}".format}),
+                      title="Costs by Symbol", first_header="Symbol")
 
     from pyfolio import plotting
 
@@ -152,7 +165,8 @@ def build_trading_costs(returns, positions, transactions, orders, settings) -> S
     section.side.append(
         '<p class="caption">The last two charts charge every dollar traded an extra 3 to 50 bps on '
         'top of the costs above -- how much worse execution the strategy can take before its edge '
-        'is gone.</p>')
+        'is gone. The cost summary has the point where it is: the extra cost that would erase the '
+        'profit.</p>')
     return section
 
 
