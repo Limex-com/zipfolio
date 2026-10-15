@@ -60,7 +60,7 @@ def build_tearsheet(
     decision_prices: pd.DataFrame | None = None,
     factor_model: str | None = "ff5_mom",
     factor_data: pd.DataFrame | None = None,
-    risk_free: str | pd.Series | None = "ruonia",
+    risk_free: str | pd.Series | None = None,
     currency: str = "USD",
     run_info: dict[str, str] | None = None,
     trials: int | None = None,
@@ -94,9 +94,11 @@ def build_tearsheet(
     * **Factor Analysis** -- when ``factor_model`` names one: ``"ff5_mom"`` (the
       default), ``"ff5"``, ``"ff3"`` or ``"ff3_mom"`` for Fama-French, which
       describe US stocks; ``"market"`` for a market model against the benchmark
-      over ``risk_free`` (``"ruonia"`` -- the Bank of Russia's rate -- or a
-      series of a rate in percent a year), which is what a Moscow book gets;
-      ``None`` for none. Exposures, alpha, attribution, rolling betas.
+      over ``risk_free`` -- a series of the rate in percent a year, such as
+      €STR or SONIA, or ``"ruonia"`` to have it read -- which is what a book
+      outside the US gets; ``None`` for none. With no ``risk_free`` the market
+      model runs on raw returns and says so: nothing is downloaded for a rate
+      the caller did not name. Exposures, alpha, attribution, rolling betas.
       ``factor_data`` replaces the Fama-French download;
 
     **What it risked**
@@ -141,7 +143,8 @@ def build_tearsheet(
     the clock of the transaction-time chart; it defaults to
     ``ZIPFOLIO_MARKET_TIMEZONE``, then New York.
 
-    ``currency`` (``"USD"``, ``"RUB"``, ``"EUR"``) is how every amount is
+    ``currency`` -- an ISO code in ``zipfolio.CURRENCIES``: ``"USD"``,
+    ``"EUR"``, ``"GBP"``, ``"JPY"``, ``"CHF"``... -- is how every amount is
     written.
 
     ``run_info`` is what the header says about the run, label to value, in

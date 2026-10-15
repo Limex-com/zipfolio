@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import traceback
 
 import numpy as np
@@ -28,13 +29,14 @@ ROLLING_WINDOW = 126
 HAC_LAGS = 5
 
 
-def risk_free_for(dates: pd.DatetimeIndex, factor_model: str | None, risk_free: str | pd.Series | None = "ruonia",
+def risk_free_for(dates: pd.DatetimeIndex, factor_model: str | None, risk_free: str | pd.Series | None = None,
                   factor_data: pd.DataFrame | None = None) -> tuple[pd.Series | None, str]:
     """The risk-free return of each session in ``dates``, and what the rate is, for the Sharpe ratio and idle cash.
 
     The same rate the factor analysis uses: the one-month T-bill from Kenneth
-    French's library under a Fama-French model, RUONIA under the market model
-    (``risk_free`` names it, or is a series of a rate in percent a year).
+    French's library under a Fama-French model, and under the market model the
+    rate ``risk_free`` gives -- a series of a rate in percent a year, or
+    ``"ruonia"`` to have it read; none when it gives none.
     French's library publishes a month or two late; its last rate is carried
     to the end of the backtest. ``(None, "")`` when there is no rate to have.
     """
@@ -61,14 +63,14 @@ def risk_free_for(dates: pd.DatetimeIndex, factor_model: str | None, risk_free: 
 
 
 def build_market_model_analysis(returns: pd.Series, benchmark: pd.Series | None,
-                                risk_free: str | pd.Series | None = "ruonia") -> Section:
+                                risk_free: str | pd.Series | None = None) -> Section:
     """The factor analysis of a market without published factors: the strategy against its benchmark.
 
-    One factor, the benchmark over the risk-free rate -- IMOEX over RUONIA for
-    a Moscow book. ``risk_free`` is ``"ruonia"`` (read from the Bank of
-    Russia), a series of the rate in percent a year, or ``None`` for none. In a
-    market where the rate has moved between 4% and 21% a year, leaving it out
-    would hand the rate to alpha, so a rate that cannot be had is said so.
+    One factor, the benchmark over the risk-free rate. ``risk_free`` is a series
+    of the rate in percent a year (named, as it will be written: ``"€STR"``),
+    ``"ruonia"`` (read from the Bank of Russia), or ``None`` for none. Leaving the
+    rate out hands it to alpha, so the section says when it was left out, and a
+    rate that was asked for and cannot be had means no analysis.
     """
     section = Section("Factor Analysis")
     if benchmark is None:
@@ -95,12 +97,18 @@ def build_market_model_analysis(returns: pd.Series, benchmark: pd.Series | None,
     rf = risk_free_returns(rate, returns.index) if rate is not None else None
     factors = market_factors(benchmark.reindex(returns.index).fillna(0.0), rf)
     over = f" over {rate_name}" if rate_name else ""
-    return build_factor_analysis(
+    analysis = build_factor_analysis(
         returns, "market", factors,
         description=f"Market model: {name}{over}",
         source=f", with {rate_name} read{rate_source}" if rate_name and rate_source else "",
         glossary={"Mkt-RF": f"{name}{over or ' (no risk-free rate)'}, the market this strategy trades in"},
     )
+    if rate is None and analysis is not None:
+        analysis.side.append(
+            '<p class="explain">No risk-free rate was given (<code>risk_free=</code>), so the strategy and '
+            f'{html.escape(str(name))} are compared on their raw returns, and the alpha includes what cash '
+            'would have earned.</p>')
+    return analysis
 
 
 def build_factor_analysis(returns: pd.Series, model: str = "ff5_mom",

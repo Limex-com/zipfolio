@@ -142,6 +142,16 @@ behind it that add up.
   scorecard is embedded as JSON (`#zipfolio-scorecard`) for agents.
 - `build_tearsheet` takes `run_info`, `trials` and `interactive`.
   `Section.finding` takes `threshold`, `advice` and `issue`.
+- **24 currencies** (`zipfolio.CURRENCIES`): USD, EUR, GBP, JPY, CHF, CAD, AUD,
+  NZD, HKD, SGD, CNY, INR, KRW, TWD, SEK, NOK, DKK, PLN, BRL, MXN, ZAR, ILS, TRY
+  and RUB. The yen and the won are written without minor digits (`¥1,235`), a
+  code standing in for a sign is spaced (`CHF 1,234.50`), and the dollars other
+  than the US one carry a prefix (`C$`, `A$`, `HK$`...). An unknown code is an
+  error that lists the known ones.
+- **`risk_free` defaults to `None`.** The market model no longer downloads a
+  rate the caller did not name. Without one it runs on raw returns, and the
+  section says that the alpha then includes what cash would have earned. A
+  caller that relied on the old default passes the rate explicitly.
 - **Documentation.** A new README: a live example report (a US momentum rotation, and the same
   backtest in QuantStats) served from `docs/` on GitHub Pages, screenshots, a comparison with
   QuantStats, and which inputs turn on which sections. The detail moved to `docs/REFERENCE.md`.

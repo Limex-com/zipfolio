@@ -199,7 +199,7 @@ Zipfolio reports a book of US stocks and a book from any other market, each in i
 
 | | US stocks | Any other market |
 | --- | --- | --- |
-| Currency (`currency=`) | `"USD"`: `$1,234.50` | `"EUR"`: `€1,234.50` |
+| Currency (`currency=`) | `"USD"`: `$1,234.50` | `"EUR"`: `€1,234.50`, `"GBP"`: `£1,234.50`, `"JPY"`: `¥1,235`, `"CHF"`: `CHF 1,234.50`... 24 ISO codes in `zipfolio.CURRENCIES` |
 | Factor analysis (`factor_model=`) | `"ff5_mom"`: Fama-French 5 + momentum | `"market"`: a market model against the benchmark, over the risk-free rate |
 | Risk-free rate | Fama-French `RF` (one-month T-bill) | `risk_free=`: your rate as a series in percent a year, such as €STR or SONIA |
 | Sectors | GICS, from a table you supply (`us_sector_mappings`) | any `{symbol: sector}` |
@@ -341,8 +341,8 @@ on the sections that need it.
 | `cost_settings` | `commission_model, commission_per_share, commission_rate, commission_min_trade_cost, slippage_basis_points, slippage_volume_limit, price_used_in_order_execution, same_bar_execution, capital` | Trading Costs, Execution |
 | `sector_mappings` | `{symbol: sector}`; `us_sector_mappings(["AAPL@XNGS", ...], table=...)` gives GICS sectors for US listings from your table | Sector Analysis |
 | `factor_model` | `"ff5_mom"` (default), `"ff5"`, `"ff3"`, `"ff3_mom"`, `"market"` or `None` | Factor Analysis |
-| `risk_free` | for `"market"`: the risk-free rate as a series in percent a year, or `None` for 0% | Factor Analysis |
-| `currency` | `"USD"` (default) or `"EUR"` | how every amount is written |
+| `risk_free` | for `"market"`: the risk-free rate as a series in percent a year. Default `None`: nothing is downloaded, the model runs on raw returns and the report says so | Factor Analysis |
+| `currency` | an ISO code: `"USD"` (default), `"EUR"`, `"GBP"`, `"JPY"`, `"CHF"`, `"CAD"`... 24 in `zipfolio.CURRENCIES` | how every amount is written: `€1,234.56`, `¥1,235`, `CHF 1,234.56` |
 | `run_info` | `{label: value}` | what the header says about the run before what the page knows: strategy and version, the benchmark's ticker and whether it is a price or a total return, universe |
 | `trials` | int | versions of the strategy backtested; the Sharpe ratio is then judged against the best of that many no-edge strategies (deflated Sharpe ratio) |
 | `interactive` | `True` (default), `False` | ECharts charts with tooltips and zoom, or static SVG |

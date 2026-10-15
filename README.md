@@ -190,7 +190,7 @@ own benchmark and risk-free rate:
 | Factors | Fama-French 5 + momentum | `factor_model="market"`: alpha and beta against your benchmark |
 | Risk-free rate | one-month T-bill (Fama-French `RF`) | `risk_free=`: your rate as a series, in percent a year |
 | Sectors | GICS, from a table you supply | any `{symbol: sector}` |
-| Currency | `currency="USD"` | `currency="EUR"` |
+| Currency | `currency="USD"` | `"EUR"`, `"GBP"`, `"JPY"`, `"CHF"`... any of 24 ISO codes |
 | Clock for fill times | New York | `market_timezone=`, the venue's own |
 
 ```python
@@ -218,8 +218,8 @@ All inputs are plain pandas. Only `returns` is required.
 | `cost_settings` | `commission_model, commission_per_share, commission_rate, commission_min_trade_cost, slippage_basis_points, slippage_volume_limit, price_used_in_order_execution, same_bar_execution, capital` | Trading Costs, Execution |
 | `sector_mappings` | `{symbol: sector}`, or `us_sector_mappings([...], table=...)` for GICS from your own table | Sector Analysis |
 | `factor_model` | `"ff5_mom"` (default), `"ff5"`, `"ff3"`, `"ff3_mom"`, `"market"` or `None` | Factor Analysis |
-| `risk_free` | for `"market"`: the risk-free rate as a series in percent a year, or `None` for 0% | Factor Analysis |
-| `currency` | `"USD"` (default) or `"EUR"` | how every amount is written |
+| `risk_free` | for `"market"`: the risk-free rate as a series in percent a year. Default `None`: nothing is downloaded, the model runs on raw returns and the report says so | Factor Analysis |
+| `currency` | an ISO code: `"USD"` (default), `"EUR"`, `"GBP"`, `"JPY"`, `"CHF"`, `"CAD"`... 24 in `zipfolio.CURRENCIES` | how every amount is written: `€1,234.56`, `¥1,235`, `CHF 1,234.56` |
 | `trials` | how many versions of the strategy were tried: the Sharpe ratio is then deflated for them | Performance |
 | `run_info` | `{label: value}` for the header: strategy, benchmark, universe | header |
 | `interactive` | `True` (default) or `False` for static SVG | every chart |
