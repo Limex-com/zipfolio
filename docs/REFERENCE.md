@@ -103,8 +103,8 @@ The sections follow in four parts, each the question a reader brings:
 | **Profit Concentration** | 50+ sessions | the return without the best 5, 10 and 20 days; the share of net PnL in the best trades; a luck test -- the same trades redrawn at random 5,000 times -- and its chance of a net loss |
 | **Instruments** | two or more names traded | each name's PnL, contribution, weight, days held, trade stats; contribution by year; daily and round-trip return distributions per name; cumulative PnL by name |
 | **Long and Short** | the book went short | PnL, contribution, exposure, winning days and return on exposure of each side; cumulative and yearly PnL by side |
-| **Sector Analysis** | two or more names, one with a sector | a **treemap** in the look of finviz's market map -- a tile per name inside its sector, sized by the capital it took and coloured by what it added to the return; allocation over time, average and peak, net PnL and contribution by sector (GICS in the US, MOEX sector indices in Moscow) |
-| **Factor Analysis** | a factor model is set | Fama-French 5 + momentum (US) or a market model against the benchmark over RUONIA (Moscow): betas with Newey-West t-stats, alpha, fit, attribution (overall and by year), rolling betas, return decomposition; with SMB and HML, a **style box** -- Morningstar's large/mid/small by value/blend/growth grid, the strategy placed by its betas with its 95% interval, its rolling path and the benchmark |
+| **Sector Analysis** | two or more names, one with a sector | a **treemap** in the look of finviz's market map -- a tile per name inside its sector, sized by the capital it took and coloured by what it added to the return; allocation over time, average and peak, net PnL and contribution by sector (GICS from a table you supply, or any classification you pass) |
+| **Factor Analysis** | a factor model is set | Fama-French 5 + momentum (US stocks) or a market model against the benchmark over the risk-free rate (any other market): betas with Newey-West t-stats, alpha, fit, attribution (overall and by year), rolling betas, return decomposition; with SMB and HML, a **style box** -- Morningstar's large/mid/small by value/blend/growth grid, the strategy placed by its betas with its 95% interval, its rolling path and the benchmark |
 
 **II. What it risked**
 
@@ -193,41 +193,30 @@ instruments are skipped, never valued with a guessed multiplier. The tests repla
 Rotation backtest from its primary book (`tests/fixtures/momentum_rotation`) and check that a one-fill,
 one-fee or one-mark corruption of random books always fails.
 
-## US and Moscow
+## Any market
 
-Zipfolio reports a US book and a Moscow book each in its own terms:
+Zipfolio reports a book of US stocks and a book from any other market, each in its own terms:
 
-| | US | Moscow |
+| | US stocks | Any other market |
 | --- | --- | --- |
-| Currency (`currency=`) | `"USD"`: `$1,234.50` | `"RUB"`: `1,234.50 ₽` |
-| Factor analysis (`factor_model=`) | `"ff5_mom"`: Fama-French 5 + momentum | `"market"`: a market model against the benchmark -- IMOEX -- over RUONIA |
-| Risk-free rate | Fama-French `RF` (one-month T-bill) | RUONIA, the Bank of Russia's overnight rate (`risk_free="ruonia"`) |
-| Sectors | GICS, from a table you supply (`us_sector_mappings`) | the Moscow Exchange sector indices -- MOEXOG, MOEXFN, MOEXMM... (`moex_sector_mappings`) |
-| Fill-time chart | New York clock | Moscow clock (`market_timezone="Europe/Moscow"`) |
+| Currency (`currency=`) | `"USD"`: `$1,234.50` | `"EUR"`: `€1,234.50` |
+| Factor analysis (`factor_model=`) | `"ff5_mom"`: Fama-French 5 + momentum | `"market"`: a market model against the benchmark, over the risk-free rate |
+| Risk-free rate | Fama-French `RF` (one-month T-bill) | `risk_free=`: your rate as a series in percent a year, such as €STR or SONIA |
+| Sectors | GICS, from a table you supply (`us_sector_mappings`) | any `{symbol: sector}` |
+| Fill-time chart | New York clock | the venue's own clock (`market_timezone="Europe/Berlin"`) |
 
-There are no published Fama-French factors for Moscow, so the factor analysis
-there is a one-factor market model: the strategy's return over RUONIA
-regressed on IMOEX's, with the same exposures, alpha, attribution, rolling beta
-and decomposition. The risk-free rate matters more there than anywhere: RUONIA
-has run between 4% and 21% a year, and a regression without it would report
-the rate as alpha. RUONIA is read from the Bank of Russia's `DailyInfo` web
-service and cached for a day; each session earns the rate published the day
-before, over the calendar days since the previous session (actual/365).
-
-Moscow sectors come from the exchange's own sector indices, read from its ISS
-service when a report is built and cached for a week: Oil & Gas (MOEXOG),
-Electric Utilities (MOEXEU), Telecommunications (MOEXTL), Metals & Mining
-(MOEXMM), Financials (MOEXFN), Consumer (MOEXCN), Chemicals (MOEXCH),
-Transportation (MOEXTN), Information Technology (MOEXIT), Real Estate (MOEXRE).
-Membership is today's, not the backtest's.
+The Fama-French factors describe US stocks. Elsewhere the factor analysis is a one-factor market model:
+the strategy's return over the risk-free rate regressed on the benchmark's, with the same exposures,
+alpha, attribution, rolling beta and decomposition. Daily factors of your own can replace it through
+`factor_data=` (decimals, with an `RF` column). The risk-free rate matters most where it is high: a
+regression without it reports the rate as alpha. Each session earns the rate known the day before,
+over the calendar days since the previous session (actual/365).
 
 ```python
-from zipfolio import build_tearsheet, moex_sector_mappings
-
-build_tearsheet("report.html", returns, imoex.rename("IMOEX"), ...,
-                factor_model="market", risk_free="ruonia", currency="RUB",
-                market_timezone="Europe/Moscow",
-                sector_mappings=moex_sector_mappings(["SBER@MISX", "GAZP@MISX", ...]))
+build_tearsheet("report.html", returns, dax.rename("DAX"), ...,
+                factor_model="market", risk_free=estr.rename("€STR"),
+                currency="EUR", market_timezone="Europe/Berlin",
+                sector_mappings={"SAP": "Information Technology", "ALV": "Financials"})
 ```
 
 ## Zipfolio and pyfolio
@@ -352,8 +341,8 @@ on the sections that need it.
 | `cost_settings` | `commission_model, commission_per_share, commission_rate, commission_min_trade_cost, slippage_basis_points, slippage_volume_limit, price_used_in_order_execution, same_bar_execution, capital` | Trading Costs, Execution |
 | `sector_mappings` | `{symbol: sector}`; `us_sector_mappings(["AAPL@XNGS", ...], table=...)` gives GICS sectors for US listings from your table | Sector Analysis |
 | `factor_model` | `"ff5_mom"` (default), `"ff5"`, `"ff3"`, `"ff3_mom"`, `"market"` or `None` | Factor Analysis |
-| `risk_free` | for `"market"`: `"ruonia"` (default) or a series of a rate in percent a year | Factor Analysis |
-| `currency` | `"USD"` (default), `"RUB"`, `"EUR"` | how every amount is written |
+| `risk_free` | for `"market"`: the risk-free rate as a series in percent a year, or `None` for 0% | Factor Analysis |
+| `currency` | `"USD"` (default) or `"EUR"` | how every amount is written |
 | `run_info` | `{label: value}` | what the header says about the run before what the page knows: strategy and version, the benchmark's ticker and whether it is a price or a total return, universe |
 | `trials` | int | versions of the strategy backtested; the Sharpe ratio is then judged against the best of that many no-edge strategies (deflated Sharpe ratio) |
 | `interactive` | `True` (default), `False` | ECharts charts with tooltips and zoom, or static SVG |
@@ -363,17 +352,13 @@ on the sections that need it.
 | `integrity`, `integrity_report`, `integrity_policy` | `False` to leave the panel out; a report made beforehand; an `AccountingPolicy` | Accounting integrity |
 | `factor_data` | your own factor returns (decimals, with `RF`), instead of the download | Factor Analysis |
 | `title` | the page title; defaults to `zipfolio.DEFAULT_TITLE` | header |
-| `market_timezone` | e.g. `"Europe/Moscow"`; defaults to `ZIPFOLIO_MARKET_TIMEZONE`, then New York | fill-time chart |
+| `market_timezone` | e.g. `"Europe/Berlin"`; defaults to `ZIPFOLIO_MARKET_TIMEZONE`, then New York | fill-time chart |
 
 `build_tearsheet` returns the titles of the sections that made it into the page,
 in page order.
 
 ## Data the package fetches or ships
 
-- **RUONIA** is read from the Bank of Russia's `DailyInfo` web service (cached
-  a day) and the **Moscow sector indices** from the exchange's ISS service
-  (cached a week), both under the same cache directory; unreachable with
-  nothing cached, the section that needs them says so or is left out.
 - **Fama-French factors** are downloaded from Kenneth French's
   [data library](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html)
   -- the same files `pandas_datareader.famafrench` reads, without the
@@ -381,14 +366,14 @@ in page order.
   (`ZIPFOLIO_CACHE_DIR`). A failed download falls back to a stale cache, then to
   a note in the report; the timeout is 8 seconds. The library publishes monthly
   with a lag, so the last weeks of a fresh backtest may fall outside it. The
-  factors describe US stocks: pass `factor_model=None` for other markets.
+  factors describe US stocks: pass `factor_model="market"` or `None` for other markets.
 - **GICS sectors are not shipped.** The classification is licensed by MSCI
   and S&P, so the codes are yours to bring: a CSV of `symbol,gics_sector`
   (two-digit sector code) passed as `us_sector_mappings(listings, table=...)`
   or found through `ZIPFOLIO_GICS_TABLE`. `scripts/build_us_sector_map.py`
   builds one from exports that carry GICS codes, one row per ticker from its
   most recent classification. `us_sector_mappings` looks up only listings on
-  US venues, so a Moscow `T` is not filed as AT&T; a reused ticker gets its
+  US venues, so a `T` listed elsewhere is not filed as AT&T; a reused ticker gets its
   current holder's sector. Or skip the table and pass `sector_mappings`
   yourself -- any `{symbol: sector}` works, GICS or not.
 
