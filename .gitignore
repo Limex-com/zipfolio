@@ -7,6 +7,9 @@ build/
 *.egg-info/
 .venv/
 *.html
+# ...except the live examples GitHub Pages serves
+!docs/*.html
+!docs/examples/*.html
 # GICS codes are licensed data: never commit a sector table.
 src/zipfolio/data/
 us_gics_sectors.csv

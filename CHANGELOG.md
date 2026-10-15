@@ -142,6 +142,10 @@ behind it that add up.
   scorecard is embedded as JSON (`#zipfolio-scorecard`) for agents.
 - `build_tearsheet` takes `run_info`, `trials` and `interactive`.
   `Section.finding` takes `threshold`, `advice` and `issue`.
+- **Documentation.** A new README: live example reports (US and Moscow momentum, and the same
+  US backtest in QuantStats) served from `docs/` on GitHub Pages, screenshots, a comparison with
+  QuantStats, and which inputs turn on which sections. The detail moved to `docs/REFERENCE.md`.
+  `examples/quickstart.py` builds a report from the Momentum Rotation book in one command.
 
 ## 0.2.1 -- 2026-10-14
 
