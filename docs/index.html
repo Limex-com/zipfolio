@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zipfolio examples</title>
+<meta name="description" content="Live Zipfolio tearsheets built from real backtests: a US momentum rotation, a Moscow one, and the same US backtest in QuantStats.">
+<style>
+  :root { --ink: #1d1d1f; --muted: #6b6b6b; --line: #e6e6e6; --accent: #6B9E00; --link: #0099cc; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 16px 64px; }
+  h1 { font-size: 34px; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .tag { font-size: 18px; color: var(--muted); margin: 0 0 28px; }
+  code { background: #f4f4f4; border-radius: 4px; padding: 2px 6px; font: 13px/1.4 ui-monospace, Menlo, monospace; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 28px 0 36px; }
+  a.card { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 16px; color: inherit; text-decoration: none;
+           border-left: 4px solid var(--accent); transition: box-shadow .15s, transform .15s; }
+  a.card:hover { box-shadow: 0 6px 22px rgba(0,0,0,.08); transform: translateY(-1px); }
+  a.card.qs { border-left-color: #5C5C5C; }
+  .card b { display: block; font-size: 17px; margin-bottom: 4px; }
+  .card span { color: var(--muted); font-size: 14px; }
+  .card em { display: block; margin-top: 10px; color: var(--link); font-style: normal; font-weight: 600; font-size: 14px; }
+  img { width: 100%; border: 1px solid var(--line); border-radius: 10px; }
+  .foot { margin-top: 28px; color: var(--muted); font-size: 14px; }
+  .foot a { color: var(--link); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Zipfolio</h1>
+  <p class="tag">Backtest tearsheets that read the book, not just the returns.</p>
+  <p>Each page below is a real Zipfolio report, built by <code>zipfolio.build_tearsheet</code> from a ziplime backtest. Every chart is live: hover it, zoom it, hide a series, open it full screen, save it as an image.</p>
+
+  <div class="cards">
+    <a class="card" href="examples/us-momentum.html">
+      <b>US momentum rotation</b>
+      <span>Top 3 of 10 US large caps, monthly, Oct 2023 – Oct 2026, $1m against SPY. All 17 sections.</span>
+      <em>Open the report →</em>
+    </a>
+    <a class="card" href="examples/moscow-momentum.html">
+      <b>Moscow momentum rotation</b>
+      <span>10 MOEX blue chips against IMOEX, in roubles: RUONIA as the risk-free rate, MOEX sector indices.</span>
+      <em>Open the report →</em>
+    </a>
+    <a class="card qs" href="examples/us-momentum-quantstats.html">
+      <b>The same US backtest in QuantStats</b>
+      <span>QuantStats 0.0.86 on the same daily returns, for comparison.</span>
+      <em>Open the report →</em>
+    </a>
+  </div>
+
+  <a href="examples/us-momentum.html"><img src="images/hero.png" alt="The summary of the US momentum report: a one-line verdict, the facts at a glance and a 16-check scorecard"></a>
+
+  <p class="foot"><code>pip install "zipfolio[all]"</code> · <a href="https://github.com/Limex-com/zipfolio">github.com/Limex-com/zipfolio</a> · Apache-2.0 · part of <a href="https://ziplime.limex.com/">ZipLime</a></p>
+</main>
+</body>
+</html>
